@@ -1040,6 +1040,21 @@ function renderDomainCard(group) {
    SAVED FOR LATER — Render Checklist Column
    ---------------------------------------------------------------- */
 
+let _lastDeferred = [];
+let _lastSessionsCount = 0;
+let _lastTrashCount = 0;
+const sidebarState = { pane: 'deferred' };
+
+function updateSidebarVisibility() {
+  const col = document.getElementById('sidebarColumn');
+  if (!col) return;
+  const hasDeferred = (_lastDeferred || []).some(d => !d.dismissedAt);
+  const hasSessions = (_lastSessionsCount || 0) > 0;
+  const hasTrash = (_lastTrashCount || 0) > 0;
+  const userOnSessionsPane = (sidebarState.pane || 'deferred') !== 'deferred';
+  col.style.display = (hasDeferred || hasSessions || hasTrash || userOnSessionsPane) ? 'block' : 'none';
+}
+
 /**
  * renderDeferredColumn()
  *
@@ -1048,7 +1063,7 @@ function renderDomainCard(group) {
  * and completed items in a collapsible archive.
  */
 async function renderDeferredColumn() {
-  const column         = document.getElementById('deferredColumn');
+  const column         = document.getElementById('sidebarColumn');
   const list           = document.getElementById('deferredList');
   const empty          = document.getElementById('deferredEmpty');
   const countEl        = document.getElementById('deferredCount');
@@ -1060,14 +1075,18 @@ async function renderDeferredColumn() {
 
   try {
     const { active, archived } = await getSavedTabs();
+    _lastDeferred = [...active, ...archived];
+    updateSidebarVisibility();
 
-    // Hide the entire column if there's nothing to show
     if (active.length === 0 && archived.length === 0) {
-      column.style.display = 'none';
+      list.replaceChildren();
+      list.style.display = 'none';
+      countEl.textContent = '';
+      empty.style.display = 'block';
+      archiveList.replaceChildren();
+      archiveEl.style.display = 'none';
       return;
     }
-
-    column.style.display = 'block';
 
     // Render active checklist items
     if (active.length > 0) {
@@ -1092,7 +1111,8 @@ async function renderDeferredColumn() {
 
   } catch (err) {
     console.warn('[tab-out] Could not load saved tabs:', err);
-    column.style.display = 'none';
+    _lastDeferred = [];
+    updateSidebarVisibility();
   }
 }
 
