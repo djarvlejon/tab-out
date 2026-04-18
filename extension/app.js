@@ -1039,6 +1039,10 @@ function installStorageSync() {
       renderTrashPane();
       updateSidebarVisibility();
     }
+    if (changes.sessionsQuarantine) {
+      renderTrashPane();
+      updateSidebarVisibility();
+    }
     if (changes.deferred) {
       if (_deferredSelfWriteSuppress > 0) {
         _deferredSelfWriteSuppress--;
@@ -1719,6 +1723,7 @@ async function renderSidebar() {
   if (trashPane) trashPane.style.display = pane === 'trash' ? 'block' : 'none';
 
   await renderDeferredPane();
+  await renderTrashPane();
 
   const deferredActive = (_lastDeferred || []).filter(d => !d.completedAt && !d.dismissedAt).length;
   const deferredPillCount = document.getElementById('deferredPillCount');
@@ -2047,7 +2052,119 @@ async function promptRenameSession(id) {
   };
 }
 
-function renderTrashPane() { /* populated in Phase 6 */ }
+async function renderTrashPane() {
+  const pane = document.getElementById('trashPane');
+  if (!pane) return;
+
+  const [{ items }, quarantineItems] = await Promise.all([readTrash(), readSessionsQuarantineItems()]);
+  const totalCount = items.length + quarantineItems.length;
+  _lastTrashCount = totalCount;
+
+  const link = document.getElementById('trashLink');
+  const linkCount = document.getElementById('trashLinkCount');
+  if (link && linkCount) {
+    linkCount.textContent = totalCount;
+    link.style.display = totalCount > 0 ? 'inline' : 'none';
+  }
+
+  pane.replaceChildren();
+
+  if (totalCount === 0) {
+    pane.appendChild(el('div', { class: 'sessions-empty' }, 'Trash is empty.'));
+    updateSidebarVisibility();
+    return;
+  }
+
+  pane.appendChild(el('div', { class: 'trash-header' }, 'Trash · 7-day retention'));
+
+  const sessionRecords = items.filter(r => r.reason === 'deleted' || r.reason === 'snapshot-overwritten');
+  const tabRecords = items.filter(r => r.reason === 'tab-removed');
+
+  if (sessionRecords.length > 0) {
+    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Sessions'));
+    for (const r of sessionRecords) {
+      pane.appendChild(renderTrashSessionCard(r));
+    }
+  }
+
+  if (tabRecords.length > 0) {
+    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Removed tabs'));
+    for (const r of tabRecords) pane.appendChild(renderTrashTabCard(r));
+  }
+
+  appendQuarantineSection(pane, quarantineItems);
+  updateSidebarVisibility();
+}
+
+function renderTrashSessionCard(record) {
+  const s = record.session;
+  const label = record.reason === 'snapshot-overwritten' ? '📸 Snapshot (overwritten)' : `🗑 ${s.name} (deleted)`;
+  const ago = timeAgo(record.trashedAt);
+
+  return el('div', { class: 'trash-card' }, [
+    el('div', { class: 'trash-card-title' }, label),
+    el('div', { class: 'trash-card-meta' },
+      `${s.tabs.length} tab${s.tabs.length === 1 ? '' : 's'} · ${record.reason === 'snapshot-overwritten' ? 'overwritten' : 'deleted'} ${ago}`),
+    el('div', { class: 'trash-card-actions' }, [
+      el('button', {
+        class: 'trash-restore',
+        'data-action': 'trash-restore',
+        'data-trash-id': record.trashId
+      }, 'Restore'),
+      el('button', {
+        class: 'trash-drop',
+        'data-action': 'trash-drop',
+        'data-trash-id': record.trashId
+      }, 'Delete permanently')
+    ])
+  ]);
+}
+
+function renderTrashTabCard(record) {
+  const tab = record.removedTab;
+  const parentName = (record.parentSessionName && record.parentSessionName.trim())
+    || (record.parentSessionId ? `session ${record.parentSessionId.slice(-6)}` : 'unknown');
+  return el('div', { class: 'trash-card' }, [
+    el('div', { class: 'trash-tab-title' }, tab.title || tab.url),
+    el('div', { class: 'trash-card-meta' }, `from "${parentName}" · ${timeAgo(record.trashedAt)}`),
+    el('div', { class: 'trash-card-actions' }, [
+      el('button', {
+        class: 'trash-restore',
+        'data-action': 'trash-restore',
+        'data-trash-id': record.trashId
+      }, 'Restore'),
+      el('button', {
+        class: 'trash-drop',
+        'data-action': 'trash-drop',
+        'data-trash-id': record.trashId
+      }, 'Delete permanently')
+    ])
+  ]);
+}
+
+async function readSessionsQuarantineItems() {
+  const { sessionsQuarantine } = await chrome.storage.local.get('sessionsQuarantine');
+  return sessionsQuarantine && Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
+}
+
+function appendQuarantineSection(pane, items) {
+  if (items.length === 0) return;
+
+  pane.appendChild(el('div', { class: 'sessions-divider' }, 'Quarantine'));
+  items.forEach((q, index) => {
+    pane.appendChild(el('div', { class: 'trash-card' }, [
+      el('div', { class: 'trash-card-title' }, 'Invalid session (schema mismatch)'),
+      el('div', { class: 'trash-card-meta' }, 'Quarantined ' + timeAgo(q.quarantinedAt)),
+      el('div', { class: 'trash-card-actions' }, [
+        el('button', {
+          class: 'trash-drop',
+          'data-action': 'quarantine-drop',
+          'data-quarantine-index': String(index)
+        }, 'Delete permanently')
+      ])
+    ]));
+  });
+}
 
 async function reopenSession(sessionId) {
   const { items } = await readSessions();
@@ -2868,6 +2985,35 @@ document.addEventListener('click', async (e) => {
       showToast({ message: 'Couldn\'t remove tab — see console.' });
       console.error('[tab-out] remove tab failed', e2);
     }
+    return;
+  }
+
+  if (action === 'trash-restore') {
+    e.preventDefault();
+    await trashRestore(actionEl.dataset.trashId);
+    showToast({ message: 'Restored' });
+    renderSessionsPane();
+    renderTrashPane();
+    return;
+  }
+
+  if (action === 'trash-drop') {
+    e.preventDefault();
+    await trashDrop(actionEl.dataset.trashId);
+    renderTrashPane();
+    return;
+  }
+
+  if (action === 'quarantine-drop') {
+    e.preventDefault();
+    const index = parseInt(actionEl.dataset.quarantineIndex, 10);
+    const { sessionsQuarantine } = await chrome.storage.local.get('sessionsQuarantine');
+    const items = Array.isArray(sessionsQuarantine?.items) ? sessionsQuarantine.items.slice() : [];
+    if (Number.isFinite(index) && index >= 0 && index < items.length) {
+      items.splice(index, 1);
+    }
+    await chrome.storage.local.set({ sessionsQuarantine: { items } });
+    renderTrashPane();
     return;
   }
 
