@@ -321,7 +321,7 @@ const TRASH_SCHEMA_VERSION = 1;
 const VALID_GROUP_COLORS = new Set(['grey','blue','red','yellow','green','pink','purple','cyan','orange']);
 
 function validateSession(s) {
-  if (!s || typeof s !== 'object') return false;
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
   if (typeof s.id !== 'string' || !s.id) return false;
   if (typeof s.rev !== 'number') return false;
   if (s.kind !== 'named' && s.kind !== 'snapshot') return false;
@@ -329,7 +329,11 @@ function validateSession(s) {
   if (typeof s.savedAt !== 'string' || !s.savedAt) return false;
   if (typeof s.updatedAt !== 'string' || !s.updatedAt) return false;
   if (!Array.isArray(s.tabs)) return false;
+  if (!s.summary || typeof s.summary !== 'object' || Array.isArray(s.summary)) return false;
+  if (!s.groups || typeof s.groups !== 'object' || Array.isArray(s.groups)) return false;
+  if (s.kind === 'snapshot' && (s.id !== SNAPSHOT_ID || s.name !== 'Snapshot')) return false;
 
+  const referencedGroupKeys = new Set();
   for (const t of s.tabs) {
     if (!t || typeof t !== 'object') return false;
     if (typeof t.url !== 'string') return false;
@@ -338,16 +342,37 @@ function validateSession(s) {
     if (typeof t.pinned !== 'boolean') return false;
     if (typeof t.index !== 'number') return false;
     if (t.savedGroupKey != null && typeof t.savedGroupKey !== 'string') return false;
+    if (t.savedGroupKey != null) referencedGroupKeys.add(t.savedGroupKey);
   }
 
-  if (s.groups && typeof s.groups === 'object') {
-    for (const key in s.groups) {
-      const g = s.groups[key];
-      if (!g || typeof g !== 'object') return false;
-      if (typeof g.title !== 'string') return false;
-      if (!VALID_GROUP_COLORS.has(g.color)) return false;
-    }
+  for (const key in s.groups) {
+    const g = s.groups[key];
+    if (!g || typeof g !== 'object' || Array.isArray(g)) return false;
+    if (typeof g.title !== 'string') return false;
+    if (!VALID_GROUP_COLORS.has(g.color)) return false;
+    if (!referencedGroupKeys.has(key)) return false;
   }
+
+  for (const key of referencedGroupKeys) {
+    if (!Object.prototype.hasOwnProperty.call(s.groups, key)) return false;
+  }
+
+  const expectedSummary = computeSummary(s.tabs);
+  const topDomains = s.summary.topDomains;
+  if (!Number.isFinite(s.summary.tabCount) || s.summary.tabCount !== s.tabs.length) return false;
+  if (!Number.isFinite(s.summary.uniqueDomains) || s.summary.uniqueDomains !== expectedSummary.uniqueDomains) return false;
+  if (!Array.isArray(topDomains) || topDomains.length > 4 || topDomains.length !== expectedSummary.topDomains.length) return false;
+
+  for (let i = 0; i < topDomains.length; i++) {
+    const top = topDomains[i];
+    const expectedTop = expectedSummary.topDomains[i];
+    if (!top || typeof top !== 'object' || Array.isArray(top)) return false;
+    if (typeof top.hostname !== 'string') return false;
+    if (!Number.isFinite(top.count)) return false;
+    if (!expectedTop) return false;
+    if (top.hostname !== expectedTop.hostname || top.count !== expectedTop.count) return false;
+  }
+
   return true;
 }
 
@@ -665,7 +690,9 @@ async function trashRestore(trashId) {
     const { items: sessionItems } = await readSessions();
     const parent = sessionItems.find(s => s.id === parentId);
     if (!parent) {
-      const tabs = [record.removedTab];
+      const recoveredTab = structuredClone(record.removedTab);
+      recoveredTab.savedGroupKey = null;
+      const tabs = [recoveredTab];
       const recoveredName = record.parentSessionName && record.parentSessionName.trim()
         ? `${record.parentSessionName.trim()} (recovered)`
         : `Recovered tab · ${timeAgo(record.trashedAt)}`;
@@ -678,6 +705,9 @@ async function trashRestore(trashId) {
     } else {
       await updateSession(parentId, s => {
         const t = structuredClone(record.removedTab);
+        if (t.savedGroupKey != null && !Object.prototype.hasOwnProperty.call(s.groups || {}, t.savedGroupKey)) {
+          t.savedGroupKey = null;
+        }
         const insertAt = Math.min(Math.max(0, t.index), s.tabs.length);
         s.tabs.splice(insertAt, 0, t);
         s.summary = computeSummary(s.tabs);
@@ -715,7 +745,12 @@ async function removeTabFromSession(sessionId, tabIndex) {
     if (!s.tabs[tabIndex]) throw new Error('gone');
     removedTab = structuredClone({ ...s.tabs[tabIndex], index: tabIndex });
     parentSessionName = s.name;
+    const removedGroupKey = s.tabs[tabIndex].savedGroupKey;
     s.tabs.splice(tabIndex, 1);
+    if (removedGroupKey != null && !s.tabs.some(tab => tab.savedGroupKey === removedGroupKey)) {
+      delete s.groups[removedGroupKey];
+      removedTab.savedGroupKey = null;
+    }
     s.summary = computeSummary(s.tabs);
     return s;
   });
