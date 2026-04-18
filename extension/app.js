@@ -241,6 +241,7 @@ async function saveTabForLater(tab) {
     completed: false,
     dismissed: false,
   });
+  _deferredSelfWriteSuppress++;
   await chrome.storage.local.set({ deferred });
 }
 
@@ -271,6 +272,7 @@ async function checkOffSavedTab(id) {
   if (tab) {
     tab.completed = true;
     tab.completedAt = new Date().toISOString();
+    _deferredSelfWriteSuppress++;
     await chrome.storage.local.set({ deferred });
   }
 }
@@ -285,6 +287,7 @@ async function dismissSavedTab(id) {
   const tab = deferred.find(t => t.id === id);
   if (tab) {
     tab.dismissed = true;
+    _deferredSelfWriteSuppress++;
     await chrome.storage.local.set({ deferred });
   }
 }
@@ -492,6 +495,7 @@ function textNode(str) {
    ---------------------------------------------------------------- */
 
 let _lastSelfWriteToken = null;
+let _deferredSelfWriteSuppress = 0;
 
 function newWriteToken() {
   const t = 'wt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -515,6 +519,10 @@ function installStorageSync() {
       updateSidebarVisibility();
     }
     if (changes.deferred) {
+      if (_deferredSelfWriteSuppress > 0) {
+        _deferredSelfWriteSuppress--;
+        return;
+      }
       renderSidebar();
       updateSidebarVisibility();
     }
