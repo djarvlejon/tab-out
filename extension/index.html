@@ -48,8 +48,8 @@
   <!-- ================================================================
        MAIN CONTENT AREA — two-column layout
        Left: open tabs (domain/mission cards)
-       Right: saved for later checklist
-       The right column only renders when it has items (JS controls this)
+       Right column: pill switcher between Saved for later / Sessions / Trash panes.
+       Visibility governed by updateSidebarVisibility() in app.js.
        ================================================================ -->
   <div class="dashboard-columns" id="dashboardColumns">
 
@@ -84,7 +84,7 @@
           <div class="section-count" id="deferredCount"></div>
         </div>
 
-        <!-- Active checklist items — injected by renderDeferredList() in app.js -->
+        <!-- Active checklist items — injected by renderDeferredPane() in app.js -->
         <div class="deferred-list" id="deferredList"></div>
 
         <!-- Empty state — shown when no active deferred tabs -->
