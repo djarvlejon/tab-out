@@ -1799,7 +1799,91 @@ function renderSessionsSearch() {
     placeholder: 'Search sessions…'
   });
 }
+
+let _openKebab = null;
+
+async function openSessionKebab(sessionId, anchorEl) {
+  closeSessionKebab();
+
+  const session = await _getSessionById(sessionId);
+  if (!session) return;
+
+  const menu = el('div', { class: 'kebab-menu' }, [
+    el('button', { 'data-action': 'session-reopen-menu', 'data-session-id': sessionId }, 'Reopen'),
+    session.kind === 'named'
+      ? el('button', { 'data-action': 'session-rename', 'data-session-id': sessionId }, 'Rename')
+      : el('button', { 'data-action': 'session-save-as-named', 'data-session-id': sessionId }, 'Save as named session'),
+    el('button', { 'data-action': 'session-duplicate', 'data-session-id': sessionId }, 'Duplicate'),
+    el('button', { 'data-action': 'session-delete', 'data-session-id': sessionId, class: 'kebab-destructive' }, 'Delete')
+  ]);
+
+  document.body.appendChild(menu);
+  const rect = anchorEl.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.top = rect.bottom + 4 + 'px';
+  menu.style.left = Math.max(8, rect.right - 180) + 'px';
+  _openKebab = menu;
+}
+
+function closeSessionKebab() {
+  if (_openKebab) { _openKebab.remove(); _openKebab = null; }
+}
+
+async function _getSessionById(id) {
+  const { items } = await readSessions();
+  return items.find(s => s.id === id);
+}
+
+function toggleSessionExpand() {}
+
+async function promptRenameSession(id) {
+  const card = document.querySelector(`.session-card[data-session-id="${id}"]`);
+  if (!card) return;
+  const nameEl = card.querySelector('.session-name');
+  if (!nameEl) return;
+  const currentName = nameEl.textContent;
+
+  const input = el('input', {
+    type: 'text',
+    class: 'session-rename-input',
+    value: currentName,
+    maxlength: '120'
+  });
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commit = async () => {
+    const newName = input.value.trim();
+    try {
+      if (newName === '' || newName === currentName) {
+        renderSessionsPane();
+        return;
+      }
+      await renameSession(id, newName);
+      showToast({ message: 'Renamed' });
+      renderSessionsPane();
+    } catch (e) {
+      if (e.message === 'name-collision') {
+        showToast({ message: `"${newName}" is already taken.` });
+      } else {
+        showToast({ message: 'Rename failed — see console.' });
+        console.error('[tab-out] rename failed', e);
+      }
+      renderSessionsPane();
+    }
+  };
+
+  input.onblur = commit;
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); renderSessionsPane(); }
+  };
+}
+
 function renderTrashPane() { /* populated in Phase 6 */ }
+
+async function reopenSession() { /* populated in Phase 4 */ }
 
 /* ----------------------------------------------------------------
    SAVE FLOW — capture current window
@@ -2410,6 +2494,94 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  if (action === 'session-kebab') {
+    e.preventDefault();
+    e.stopPropagation();
+    await openSessionKebab(actionEl.dataset.sessionId, actionEl);
+    return;
+  }
+
+  if (action === 'session-toggle-expand') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof toggleSessionExpand === 'function') toggleSessionExpand(actionEl.dataset.sessionId);
+    return;
+  }
+
+  if (action === 'session-reopen' || action === 'session-reopen-menu') {
+    e.preventDefault();
+    e.stopPropagation();
+    closeSessionKebab();
+    await reopenSession(actionEl.dataset.sessionId);
+    return;
+  }
+
+  if (action === 'session-rename') {
+    e.preventDefault();
+    closeSessionKebab();
+    await promptRenameSession(actionEl.dataset.sessionId);
+    return;
+  }
+
+  if (action === 'session-save-as-named') {
+    e.preventDefault();
+    closeSessionKebab();
+    const { items } = await readSessions();
+    const snap = items.find(s => s.id === actionEl.dataset.sessionId);
+    if (!snap) return;
+    await openSaveOverlay({
+      capture: {
+        tabs: snap.tabs,
+        groups: snap.groups,
+        summary: snap.summary,
+        skipped: 0,
+        needsTabGroupsPermission: false
+      },
+      prefilledName: await uniqueDefaultName('Snapshot · ' + new Date().toLocaleString(undefined, { month: 'short', day: 'numeric' }))
+    });
+    return;
+  }
+
+  if (action === 'session-duplicate') {
+    e.preventDefault();
+    closeSessionKebab();
+    try {
+      await duplicateSession(actionEl.dataset.sessionId);
+      showToast({ message: 'Duplicated' });
+      renderSessionsPane();
+    } catch (e2) {
+      showToast({ message: 'Couldn\'t duplicate — see console.' });
+      console.error('[tab-out] duplicate failed', e2);
+    }
+    return;
+  }
+
+  if (action === 'session-delete') {
+    e.preventDefault();
+    closeSessionKebab();
+    const id = actionEl.dataset.sessionId;
+    try {
+      await deleteSession(id);
+      showToast({
+        message: 'Deleted',
+        actionLabel: 'Undo',
+        onAction: async () => {
+          const trash = await readTrash();
+          const rec = trash.items.find(r => r.reason === 'deleted' && r.session && r.session.id === id);
+          if (rec) await trashRestore(rec.trashId);
+          renderSessionsPane();
+          renderTrashPane();
+        }
+      });
+      renderSessionsPane();
+      renderTrashPane();
+    } catch (e2) {
+      showToast({ message: 'Couldn\'t delete — see console.' });
+      console.error('[tab-out] delete failed', e2);
+    }
+    return;
+  }
+
   // ---- Close duplicate Tab Out tabs ----
   if (action === 'close-tabout-dupes') {
     await closeTabOutDupes();
@@ -2654,6 +2826,17 @@ document.addEventListener('click', async (e) => {
     return;
   }
 });
+
+// Close on outside click
+document.addEventListener('click', (e) => {
+  if (_openKebab && !_openKebab.contains(e.target) && !e.target.closest('.session-kebab')) {
+    closeSessionKebab();
+  }
+});
+
+window.addEventListener('scroll', () => {
+  if (_openKebab) closeSessionKebab();
+}, true);
 
 // ---- Archive toggle — expand/collapse the archive section ----
 document.addEventListener('click', (e) => {

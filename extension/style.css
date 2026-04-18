@@ -1157,6 +1157,45 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
 
 .session-favicon-row > * { margin-right: -2px; }
 
+.kebab-menu {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  min-width: 180px;
+  z-index: 50;
+}
+
+.kebab-menu button {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+
+.kebab-menu button:hover { background: var(--hover); }
+
+.kebab-menu button.kebab-destructive { color: var(--red, #d9534f); }
+
+.session-rename-input {
+  background: var(--bg);
+  border: 1px solid var(--fg);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 14px;
+  width: 100%;
+  flex: 1;
+}
+
 /* On narrow screens, stack vertically */
 @media (max-width: 800px) {
   .dashboard-columns {
