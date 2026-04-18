@@ -1777,6 +1777,7 @@ async function renderSessionsPane() {
 function renderSessionCard(session) {
   const isSnapshot = session.kind === 'snapshot';
   const isExpanded = _expandedSessions.has(session.id);
+  const isEmptySession = session.tabs.length === 0;
 
   // Title line
   const title = el('span', { class: 'session-name' }, [
@@ -1808,24 +1809,29 @@ function renderSessionCard(session) {
     textNode(timeAgo(session.updatedAt))
   ]);
 
-  // Favicon row
-  const faviconRow = el('div', { class: 'session-favicon-row' },
-    (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16))
-  );
+  const children = [header, meta];
 
-  const children = [header, meta, faviconRow];
-
-  if (isExpanded) {
-    if (session.tabs.length === 0) {
-      children.push(el('div', { class: 'session-empty-state' }, [
-        textNode('0 tabs (all removed)'),
+  if (isEmptySession) {
+    children.push(el('div', { class: 'session-empty-state' }, [
+      el('div', { class: 'session-empty-title' }, '0 tabs (all removed)'),
+      el('div', { class: 'session-empty-actions' }, [
         el('button', {
-          class: 'session-empty-delete',
+          class: 'session-empty-action',
+          'data-action': 'session-open-trash',
+          'data-session-id': session.id
+        }, 'Restore from Trash'),
+        el('button', {
+          class: 'session-empty-action session-empty-delete',
           'data-action': 'session-delete',
           'data-session-id': session.id
-        }, 'Delete session')
-      ]));
-    } else {
+        }, 'Delete')
+      ])
+    ]));
+  } else {
+    children.push(el('div', { class: 'session-favicon-row' },
+      (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16))
+    ));
+    if (isExpanded) {
       const list = el('div', { class: 'session-tab-list' },
         session.tabs.map((t, i) => renderSessionTabRow(session.id, t, i)));
       children.push(list);
@@ -1835,12 +1841,13 @@ function renderSessionCard(session) {
   // Flip chevron character when expanded
   chevron.textContent = isExpanded ? '▾' : '▸';
 
-  const card = el('div', {
+  const cardAttrs = {
     class: 'session-card' + (isSnapshot ? ' session-card-snapshot' : ''),
-    'data-action': 'session-reopen',
     'data-session-id': session.id,
     'data-session-kind': session.kind
-  }, children);
+  };
+  if (!isEmptySession) cardAttrs['data-action'] = 'session-reopen';
+  const card = el('div', cardAttrs, children);
 
   return card;
 }
@@ -1928,9 +1935,13 @@ async function promptRenameSession(id) {
     type: 'text',
     class: 'session-rename-input',
     value: currentName,
-    maxlength: '120'
+    maxlength: '120',
+    'data-action': 'none'
   });
   nameEl.replaceWith(input);
+  for (const eventName of ['click', 'focus', 'mousedown']) {
+    input.addEventListener(eventName, e => e.stopPropagation());
+  }
   input.focus();
   input.select();
 
@@ -2620,6 +2631,13 @@ document.addEventListener('click', async (e) => {
       },
       prefilledName: await uniqueDefaultName('Snapshot · ' + new Date().toLocaleString(undefined, { month: 'short', day: 'numeric' }))
     });
+    return;
+  }
+
+  if (action === 'session-open-trash') {
+    e.preventDefault();
+    e.stopPropagation();
+    await switchSidebarPane('trash');
     return;
   }
 

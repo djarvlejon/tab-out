@@ -1239,7 +1239,18 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   color: var(--muted);
 }
 
-.session-empty-delete {
+.session-empty-title {
+  font-size: 13px;
+}
+
+.session-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.session-empty-action {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg);
@@ -1247,7 +1258,6 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   padding: 4px 10px;
   border-radius: 4px;
   cursor: pointer;
-  margin-top: 8px;
 }
 
 /* On narrow screens, stack vertically */
