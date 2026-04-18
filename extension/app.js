@@ -1037,7 +1037,7 @@ function renderDomainCard(group) {
 
 
 /* ----------------------------------------------------------------
-   SAVED FOR LATER — Render Checklist Column
+   SIDEBAR STATE & PANE ROUTER
    ---------------------------------------------------------------- */
 
 let _lastDeferred = [];
@@ -1055,14 +1055,62 @@ function updateSidebarVisibility() {
   col.style.display = (hasDeferred || hasSessions || hasTrash || userOnSessionsPane) ? 'block' : 'none';
 }
 
+async function initSidebarState() {
+  const { sidebarPane = 'deferred' } = await chrome.storage.local.get('sidebarPane');
+  sidebarState.pane = sidebarPane;
+}
+
+async function switchSidebarPane(pane) {
+  sidebarState.pane = pane;
+  await chrome.storage.local.set({ sidebarPane: pane });
+  await renderSidebar();
+  updateSidebarVisibility();
+}
+
+async function renderSidebar() {
+  const pane = sidebarState.pane || 'deferred';
+
+  document.querySelectorAll('#sidebarPills .pill').forEach(p => {
+    p.classList.toggle('pill-active', p.dataset.pane === pane);
+  });
+
+  const deferredPane = document.getElementById('deferredPane');
+  const sessionsPane = document.getElementById('sessionsPane');
+  const trashPane = document.getElementById('trashPane');
+  if (deferredPane) deferredPane.style.display = pane === 'deferred' ? 'block' : 'none';
+  if (sessionsPane) sessionsPane.style.display = pane === 'sessions' ? 'block' : 'none';
+  if (trashPane) trashPane.style.display = pane === 'trash' ? 'block' : 'none';
+
+  await renderDeferredPane();
+
+  const deferredActive = (_lastDeferred || []).filter(d => !d.completedAt && !d.dismissedAt).length;
+  const deferredPillCount = document.getElementById('deferredPillCount');
+  if (deferredPillCount) deferredPillCount.textContent = deferredActive;
+
+  const sessionsPillCount = document.getElementById('sessionsPillCount');
+  if (sessionsPillCount) sessionsPillCount.textContent = _lastSessionsCount;
+
+  const trashLink = document.getElementById('trashLink');
+  if (trashLink) trashLink.style.display = _lastTrashCount > 0 ? '' : 'none';
+
+  const trashLinkCount = document.getElementById('trashLinkCount');
+  if (trashLinkCount) trashLinkCount.textContent = _lastTrashCount;
+
+  updateSidebarVisibility();
+}
+
+/* ----------------------------------------------------------------
+   SAVED FOR LATER — Render Checklist Pane
+   ---------------------------------------------------------------- */
+
 /**
- * renderDeferredColumn()
+ * renderDeferredPane()
  *
  * Reads saved tabs from chrome.storage.local and renders the right-side
  * "Saved for Later" checklist column. Shows active items as a checklist
  * and completed items in a collapsible archive.
  */
-async function renderDeferredColumn() {
+async function renderDeferredPane() {
   const column         = document.getElementById('sidebarColumn');
   const list           = document.getElementById('deferredList');
   const empty          = document.getElementById('deferredEmpty');
@@ -1364,8 +1412,8 @@ async function renderStaticDashboard() {
   // --- Check for duplicate Tab Out tabs ---
   checkTabOutDupes();
 
-  // --- Render "Saved for Later" column ---
-  await renderDeferredColumn();
+  // --- Render sidebar panes ---
+  await renderSidebar();
 }
 
 async function renderDashboard() {
@@ -1382,6 +1430,13 @@ async function renderDashboard() {
    ---------------------------------------------------------------- */
 
 document.addEventListener('click', async (e) => {
+  const pillBtn = e.target.closest('[data-pane]');
+  if (pillBtn) {
+    e.preventDefault();
+    await switchSidebarPane(pillBtn.dataset.pane);
+    return;
+  }
+
   // Walk up the DOM to find the nearest element with data-action
   const actionEl = e.target.closest('[data-action]');
   if (!actionEl) return;
@@ -1496,7 +1551,7 @@ document.addEventListener('click', async (e) => {
     }
 
     showToast('Saved for later');
-    await renderDeferredColumn();
+    await renderSidebar();
     return;
   }
 
@@ -1515,7 +1570,7 @@ document.addEventListener('click', async (e) => {
         item.classList.add('removing');
         setTimeout(() => {
           item.remove();
-          renderDeferredColumn(); // refresh counts and archive
+          renderSidebar();
         }, 300);
       }, 800);
     }
@@ -1534,7 +1589,7 @@ document.addEventListener('click', async (e) => {
       item.classList.add('removing');
       setTimeout(() => {
         item.remove();
-        renderDeferredColumn();
+        renderSidebar();
       }, 300);
     }
     return;
@@ -1690,4 +1745,9 @@ document.addEventListener('input', async (e) => {
 /* ----------------------------------------------------------------
    INITIALIZE
    ---------------------------------------------------------------- */
-renderDashboard();
+async function initApp() {
+  await initSidebarState();
+  await renderDashboard();
+}
+
+initApp();

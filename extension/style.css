@@ -18,6 +18,9 @@
   --status-abandoned: #b35a5a;
   --card-bg: #fffdf9;
   --shadow: rgba(26, 22, 19, 0.06);
+  --border: var(--warm-gray);
+  --fg: var(--ink);
+  --bg: var(--paper);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -930,6 +933,50 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   top: 32px;
   max-height: calc(100vh - 64px);
   overflow-y: auto;
+}
+
+.sidebar-pills {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pill-active {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+.pill-count {
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.trash-link {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 /* On narrow screens, stack vertically */
