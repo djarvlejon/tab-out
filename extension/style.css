@@ -1102,6 +1102,12 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   margin-bottom: 8px;
 }
 
+.sessions-search-count {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
 .session-card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1212,6 +1218,8 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
 }
 
 .session-tab-row:hover { background: var(--hover); }
+
+.session-tab-match { background: rgba(255, 224, 94, 0.08); }
 
 .session-tab-title {
   flex: 1;

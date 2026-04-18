@@ -1746,7 +1746,8 @@ async function renderSessionsPane() {
   const pillCount = document.getElementById('sessionsPillCount');
   if (pillCount) pillCount.textContent = items.length;
 
-  // Render order: snapshot first, then named by (updatedAt desc, id desc)
+  const q = _sessionSearchQuery || '';
+  const shouldRestoreSearchFocus = _sessionSearchRestoreFocus || document.activeElement?.id === 'sessionsSearchInput';
   const snapshot = items.find(s => s.kind === 'snapshot');
   const named = items.filter(s => s.kind === 'named')
     .sort((a, b) => {
@@ -1766,22 +1767,38 @@ async function renderSessionsPane() {
   // Search input
   pane.appendChild(renderSessionsSearch());
 
-  // Snapshot section
-  if (snapshot) {
-    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Snapshot'));
-    pane.appendChild(renderSessionCard(snapshot));
+  const visibleSnapshot = snapshot && sessionMatchesQuery(snapshot, q) ? snapshot : null;
+  const visibleNamed = named.filter(s => sessionMatchesQuery(s, q));
+
+  if (q) {
+    const count = (visibleSnapshot ? 1 : 0) + visibleNamed.length;
+    pane.appendChild(el('div', { class: 'sessions-search-count' },
+      `${count} session${count === 1 ? '' : 's'} match`));
   }
 
-  // Named section
-  if (named.length > 0) {
-    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Named'));
-    for (const s of named) pane.appendChild(renderSessionCard(s));
+  if (visibleSnapshot) {
+    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Snapshot'));
+    pane.appendChild(renderSessionCard(visibleSnapshot, q));
   }
+
+  if (visibleNamed.length > 0) {
+    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Named'));
+    for (const s of visibleNamed) pane.appendChild(renderSessionCard(s, q));
+  }
+
+  if (shouldRestoreSearchFocus) {
+    const input = document.getElementById('sessionsSearchInput');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+  _sessionSearchRestoreFocus = false;
 
   updateSidebarVisibility();
 }
 
-function renderSessionCard(session) {
+function renderSessionCard(session, q = '') {
   const isSnapshot = session.kind === 'snapshot';
   const isExpanded = _expandedSessions.has(session.id);
   const isEmptySession = session.tabs.length === 0;
@@ -1840,7 +1857,7 @@ function renderSessionCard(session) {
     ));
     if (isExpanded) {
       const list = el('div', { class: 'session-tab-list' },
-        session.tabs.map((t, i) => renderSessionTabRow(session.id, t, i)));
+        session.tabs.map((t, i) => renderSessionTabRow(session.id, t, i, q)));
       children.push(list);
     }
   }
@@ -1859,7 +1876,8 @@ function renderSessionCard(session) {
   return card;
 }
 
-function renderSessionTabRow(sessionId, tab, tabIndex) {
+function renderSessionTabRow(sessionId, tab, tabIndex, q = '') {
+  const matched = q && tabMatchesQuery(tab, q.toLowerCase());
   const closeBtn = el('button', {
     class: 'session-tab-close',
     'data-action': 'session-tab-remove',
@@ -1869,7 +1887,7 @@ function renderSessionTabRow(sessionId, tab, tabIndex) {
   }, '✕');
 
   return el('div', {
-    class: 'session-tab-row',
+    class: 'session-tab-row' + (matched ? ' session-tab-match' : ''),
     'data-action': 'session-tab-open',
     'data-session-id': sessionId,
     'data-tab-index': String(tabIndex)
@@ -1882,17 +1900,53 @@ function renderSessionTabRow(sessionId, tab, tabIndex) {
 }
 
 function renderSessionsSearch() {
-  return el('input', {
+  const input = el('input', {
     type: 'text',
     class: 'sessions-search',
     id: 'sessionsSearchInput',
-    placeholder: 'Search sessions…'
+    placeholder: 'Search sessions…',
+    value: _sessionSearchQuery || ''
   });
+
+  let debounceTimer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      _sessionSearchQuery = input.value.trim();
+      _sessionSearchRestoreFocus = true;
+      applySessionsSearch();
+    }, 150);
+  });
+
+  return input;
 }
 
+let _sessionSearchQuery = '';
+let _sessionSearchRestoreFocus = false;
 let _openKebab = null;
 let _kebabOpenToken = 0;
 const _expandedSessions = new Set();
+
+function sessionMatchesQuery(session, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  if (session.name.toLowerCase().includes(needle)) return true;
+  return session.tabs.some(t => tabMatchesQuery(t, needle));
+}
+
+function tabMatchesQuery(tab, needle) {
+  if (tab.title.toLowerCase().includes(needle)) return true;
+  try {
+    const u = new URL(tab.url);
+    const hostAndPath = u.hostname.toLowerCase() + u.pathname.toLowerCase();
+    if (hostAndPath.includes(needle)) return true;
+  } catch {}
+  return false;
+}
+
+async function applySessionsSearch() {
+  await renderSessionsPane();
+}
 
 async function openSessionKebab(sessionId, anchorEl) {
   const token = ++_kebabOpenToken;
