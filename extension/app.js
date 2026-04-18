@@ -1637,6 +1637,73 @@ function renderSessionsPane() { /* populated in Phase 3 */ }
 function renderTrashPane() { /* populated in Phase 6 */ }
 
 /* ----------------------------------------------------------------
+   SAVE FLOW — capture current window
+   ---------------------------------------------------------------- */
+
+const ALLOWED_SCHEMES = /^https?:\/\//i;
+
+async function captureCurrentWindow() {
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const newtabUrl = chrome.runtime.getURL('index.html');
+
+  let skipped = 0;
+  const kept = [];
+  for (const t of tabs) {
+    if (!t.url) { skipped++; continue; }
+    if (t.url === newtabUrl || t.url.startsWith('chrome://newtab')) { skipped++; continue; }
+    if (!ALLOWED_SCHEMES.test(t.url)) { skipped++; continue; }
+    kept.push(t);
+  }
+
+  const groupKeyByChromeId = new Map();
+  let nextKeyIdx = 0;
+  for (const t of kept) {
+    if (t.groupId != null && t.groupId >= 0 && !groupKeyByChromeId.has(t.groupId)) {
+      groupKeyByChromeId.set(t.groupId, 'grp_' + (nextKeyIdx++));
+    }
+  }
+
+  let groupsMeta = {};
+  if (groupKeyByChromeId.size > 0) {
+    const granted = await ensureTabGroupsPermission({ prompt: true });
+    if (granted) {
+      for (const [chromeGroupId, savedKey] of groupKeyByChromeId) {
+        try {
+          const g = await chrome.tabGroups.get(chromeGroupId);
+          const color = VALID_GROUP_COLORS.has(g.color) ? g.color : 'grey';
+          groupsMeta[savedKey] = { title: g.title || '', color };
+        } catch (e) {
+          console.warn('[tab-out] tabGroups.get failed', e);
+        }
+      }
+    } else {
+      const { _tabOutGroupNotice } = await chrome.storage.local.get('_tabOutGroupNotice');
+      if (!_tabOutGroupNotice) {
+        showToast({ message: "Groups won't be saved without permission — grant it from the kebab menu anytime." });
+        await chrome.storage.local.set({ _tabOutGroupNotice: true });
+      }
+      groupKeyByChromeId.clear();
+    }
+  }
+
+  const tabRecords = kept.map(t => ({
+    url: t.url,
+    title: (t.title && t.title.trim()) || (() => { try { return new URL(t.url).hostname; } catch { return 'Untitled'; } })(),
+    favIconUrl: '',
+    pinned: !!t.pinned,
+    index: t.index,
+    savedGroupKey: groupKeyByChromeId.get(t.groupId) || null
+  }));
+
+  return {
+    tabs: tabRecords,
+    groups: groupsMeta,
+    summary: computeSummary(tabRecords),
+    skipped
+  };
+}
+
+/* ----------------------------------------------------------------
    SAVED FOR LATER — Render Checklist Pane
    ---------------------------------------------------------------- */
 
