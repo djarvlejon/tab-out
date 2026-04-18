@@ -320,6 +320,17 @@ const TRASH_SCHEMA_VERSION = 1;
 
 const VALID_GROUP_COLORS = new Set(['grey','blue','red','yellow','green','pink','purple','cyan','orange']);
 
+function sanitizeSessionInPlace(s) {
+  if (s && s.groups && typeof s.groups === 'object') {
+    for (const key in s.groups) {
+      const g = s.groups[key];
+      if (g && typeof g.color === 'string' && !VALID_GROUP_COLORS.has(g.color)) {
+        g.color = 'grey';
+      }
+    }
+  }
+}
+
 function validateSession(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
   if (typeof s.id !== 'string' || !s.id) return false;
@@ -389,6 +400,7 @@ async function readSessions() {
   const valid = [];
   const invalid = [];
   for (const item of items) {
+    sanitizeSessionInPlace(item);
     if (validateSession(item)) valid.push(item);
     else invalid.push(item);
   }
@@ -416,6 +428,7 @@ async function readSessions() {
       const latestValid = [];
       const latestInvalid = [];
       for (const item of latestItems) {
+        sanitizeSessionInPlace(item);
         if (validateSession(item)) latestValid.push(item);
         else latestInvalid.push(item);
       }
@@ -1881,8 +1894,13 @@ function updateSidebarVisibility() {
 }
 
 async function initSidebarState() {
-  const { sidebarPane = 'deferred' } = await chrome.storage.local.get('sidebarPane');
-  sidebarState.pane = sidebarPane;
+  const stored = await chrome.storage.local.get('sidebarPane');
+  if (stored.sidebarPane) {
+    sidebarState.pane = stored.sidebarPane;
+    return;
+  }
+  const { items } = await readSessions();
+  sidebarState.pane = items.length > 0 ? 'sessions' : 'deferred';
 }
 
 async function switchSidebarPane(pane) {
@@ -2228,14 +2246,38 @@ async function promptRenameSession(id) {
     maxlength: '120',
     'data-action': 'none'
   });
-  nameEl.replaceWith(input);
-  for (const eventName of ['click', 'focus', 'mousedown']) {
-    input.addEventListener(eventName, e => e.stopPropagation());
+  const errorEl = el('div', {
+    class: 'session-rename-error',
+    style: { display: 'none' },
+    'data-action': 'none'
+  });
+  const renameWrap = el('div', {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      flex: '1',
+      minWidth: '0'
+    },
+    'data-action': 'none'
+  }, [input, errorEl]);
+  nameEl.replaceWith(renameWrap);
+  for (const target of [renameWrap, input]) {
+    for (const eventName of ['click', 'focus', 'mousedown']) {
+      target.addEventListener(eventName, e => e.stopPropagation());
+    }
   }
   input.focus();
   input.select();
 
+  let renameCancelled = false;
+
+  const clearInlineError = () => {
+    errorEl.textContent = '';
+    errorEl.style.display = 'none';
+  };
+
   const commit = async () => {
+    if (renameCancelled) return;
     const newName = input.value.trim();
     try {
       if (newName === '' || newName === currentName) {
@@ -2247,8 +2289,17 @@ async function promptRenameSession(id) {
       renderSessionsPane();
     } catch (e) {
       if (e.message === 'name-collision') {
-        showToast({ message: `"${newName}" is already taken.` });
-      } else if (e.message === 'write-conflict') {
+        errorEl.textContent = `A session named "${newName}" already exists.`;
+        errorEl.style.display = 'block';
+        requestAnimationFrame(() => {
+          if (input.isConnected) {
+            input.focus();
+            input.select();
+          }
+        });
+        return;
+      }
+      if (e.message === 'write-conflict') {
         showWriteConflictToast();
       } else {
         showToast({ message: 'Rename failed — see console.' });
@@ -2258,10 +2309,17 @@ async function promptRenameSession(id) {
     }
   };
 
+  input.oninput = () => {
+    clearInlineError();
+  };
   input.onblur = commit;
   input.onkeydown = (e) => {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { e.preventDefault(); renderSessionsPane(); }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      renameCancelled = true;
+      renderSessionsPane();
+    }
   };
 }
 
@@ -2503,6 +2561,10 @@ async function reopenSession(sessionId) {
     return;
   }
 
+  if (dropped > 0) {
+    showToast({ message: `Reopening ${valid.length}/${session.tabs.length} tabs (${dropped} had invalid URLs)` });
+  }
+
   if (valid.length > 75) {
     showToast({ message: `Opening ${valid.length} tabs — this may take a moment.` });
   }
@@ -2522,22 +2584,25 @@ async function reopenSession(sessionId) {
 
   const populated = await chrome.windows.get(newWindow.id, { populate: true });
   const createdTabs = (populated.tabs || []).slice().sort((a, b) => a.index - b.index);
+  const createdCount = createdTabs.length;
 
-  let pinFailCount = 0;
-  let groupFailCount = 0;
+  let pinRestoreFailCount = 0;
+  let unpinnedTabCount = 0;
+  let groupRestoreFailCount = 0;
+  let ungroupedTabCount = 0;
 
   for (let i = 0; i < valid.length; i++) {
     const savedTab = valid[i];
     const createdTab = createdTabs[i];
     if (!savedTab.pinned) continue;
     if (!createdTab) {
-      pinFailCount++;
+      unpinnedTabCount++;
       continue;
     }
     try {
       await chrome.tabs.update(createdTab.id, { pinned: true });
     } catch (e) {
-      pinFailCount++;
+      pinRestoreFailCount++;
       console.warn('[tab-out] pin failed', e);
     }
   }
@@ -2552,7 +2617,7 @@ async function reopenSession(sessionId) {
         if (!k) continue;
         const createdTab = createdTabs[i];
         if (!createdTab) {
-          groupFailCount++;
+          ungroupedTabCount++;
           continue;
         }
         if (!bySavedKey.has(k)) bySavedKey.set(k, []);
@@ -2561,21 +2626,26 @@ async function reopenSession(sessionId) {
       for (const [savedKey, tabIds] of bySavedKey) {
         const meta = session.groups[savedKey];
         if (!meta) continue;
+        const color = typeof meta.color === 'string' && VALID_GROUP_COLORS.has(meta.color)
+          ? meta.color
+          : 'grey';
         try {
           const gid = await chrome.tabs.group({ tabIds, createProperties: { windowId: newWindow.id } });
-          await chrome.tabGroups.update(gid, { title: meta.title, color: meta.color });
+          await chrome.tabGroups.update(gid, { title: meta.title, color });
         } catch (e) {
-          groupFailCount++;
+          groupRestoreFailCount++;
           console.warn('[tab-out] group restore failed', e);
         }
       }
     }
   }
 
-  const parts = [`Opened ${valid.length} tab${valid.length === 1 ? '' : 's'} in new window`];
-  if (dropped > 0) parts.push(`${dropped} skipped`);
-  if (pinFailCount > 0) parts.push(`${pinFailCount} pin${pinFailCount === 1 ? '' : 's'} failed`);
-  if (groupFailCount > 0) parts.push(`${groupFailCount} group${groupFailCount === 1 ? '' : 's'} failed`);
+  const parts = [`Opened ${createdCount} tab${createdCount === 1 ? '' : 's'} in new window`];
+  if (createdCount < valid.length) parts.push(`${valid.length - createdCount} not created`);
+  if (pinRestoreFailCount > 0) parts.push(`${pinRestoreFailCount} pin${pinRestoreFailCount === 1 ? '' : 's'} failed`);
+  if (unpinnedTabCount > 0) parts.push(`${unpinnedTabCount} tab${unpinnedTabCount === 1 ? '' : 's'} not pinned`);
+  if (groupRestoreFailCount > 0) parts.push(`${groupRestoreFailCount} group${groupRestoreFailCount === 1 ? '' : 's'} failed`);
+  if (ungroupedTabCount > 0) parts.push(`${ungroupedTabCount} tab${ungroupedTabCount === 1 ? '' : 's'} not grouped`);
   showToast({ message: parts.join(', ') });
 }
 
@@ -2739,6 +2809,18 @@ async function openSaveOverlay({ capture, prefilledName }) {
     if (e.key === 'Escape') {
       e.preventDefault();
       closeSaveOverlay();
+      return;
+    }
+    if (e.key === 'Enter') {
+      const target = e.target;
+      const action = target && target.dataset ? target.dataset.action : '';
+      if (action === 'cancel-save-overlay' || action === 'quick-save-from-overlay') {
+        return;
+      }
+      if (!saveBtn.disabled) {
+        e.preventDefault();
+        saveBtn.click();
+      }
     }
   };
 
@@ -2760,10 +2842,6 @@ async function openSaveOverlay({ capture, prefilledName }) {
     }
   };
   input.oninput = onInput;
-
-  input.onkeydown = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); if (!saveBtn.disabled) saveBtn.click(); }
-  };
 }
 
 function closeSaveOverlay() {
@@ -2798,8 +2876,9 @@ async function confirmSaveOverlay() {
       ? `Saved · ${capture.tabs.length} tabs (${skipped} skipped)`
       : `Saved · ${capture.tabs.length} tabs`;
     showToast({ message: msg });
-    await switchSidebarPane('sessions');
     await renderSessionsPane();
+    await switchSidebarPane('sessions');
+    updateSidebarVisibility();
     await maybeShowFirstSaveBanner();
   } catch (e) {
     if (e.message === 'name-collision') {
@@ -2855,8 +2934,9 @@ async function quickSaveFromOverlay() {
         }
       } : undefined
     });
-    await switchSidebarPane('sessions');
     await renderSessionsPane();
+    await switchSidebarPane('sessions');
+    updateSidebarVisibility();
     await maybeShowFirstSaveBanner();
   } catch (e) {
     if (e.message === 'write-conflict') {
@@ -3327,8 +3407,9 @@ document.addEventListener('click', async (e) => {
           }
         } : undefined
       });
-      renderSessionsPane();
-      renderTrashPane();
+      await renderSessionsPane();
+      await renderTrashPane();
+      updateSidebarVisibility();
     } catch (e2) {
       if (e2.message === 'write-conflict') {
         showWriteConflictToast();
@@ -3391,7 +3472,9 @@ document.addEventListener('click', async (e) => {
           }
         } : undefined
       });
-      renderSessionsPane();
+      await renderSessionsPane();
+      await renderTrashPane();
+      updateSidebarVisibility();
     } catch (e2) {
       if (e2.message === 'write-conflict') {
         showWriteConflictToast();
