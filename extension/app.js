@@ -516,6 +516,86 @@ function installStorageSync() {
 }
 
 /* ----------------------------------------------------------------
+   PERMISSIONS
+   ---------------------------------------------------------------- */
+
+let _faviconPermissionChecked = false;
+let _faviconPermissionGranted = false;
+
+async function ensureFaviconPermission({ prompt = false } = {}) {
+  if (_faviconPermissionChecked) return _faviconPermissionGranted;
+  _faviconPermissionGranted = await chrome.permissions.contains({ permissions: ['favicon'] });
+  if (!_faviconPermissionGranted && prompt) {
+    _faviconPermissionGranted = await chrome.permissions.request({ permissions: ['favicon'] });
+  }
+  _faviconPermissionChecked = true;
+  return _faviconPermissionGranted;
+}
+
+async function ensureTabGroupsPermission({ prompt = false } = {}) {
+  const granted = await chrome.permissions.contains({ permissions: ['tabGroups'] });
+  if (granted) return true;
+  if (!prompt) return false;
+  return await chrome.permissions.request({ permissions: ['tabGroups'] });
+}
+
+/* ----------------------------------------------------------------
+   FAVICON RENDERING
+   Returns an <img> that uses Chrome's _favicon endpoint when granted,
+   or a letter-chip fallback element.
+   ---------------------------------------------------------------- */
+
+function faviconEl(url, size = 16) {
+  let hostname = '';
+  try { hostname = new URL(url).hostname; } catch {}
+
+  if (_faviconPermissionGranted && hostname) {
+    const faviconHref = chrome.runtime.getURL('_favicon/')
+      + '?pageUrl=' + encodeURIComponent(url)
+      + '&size=' + size;
+    const img = el('img', {
+      src: faviconHref,
+      alt: '',
+      width: size,
+      height: size,
+      class: 'favicon',
+      style: {
+        verticalAlign: '-2px',
+        borderRadius: '2px',
+        flexShrink: '0'
+      }
+    });
+    img.addEventListener('error', () => {
+      const chip = letterChipEl(hostname, size);
+      img.replaceWith(chip);
+    });
+    return img;
+  }
+
+  return letterChipEl(hostname, size);
+}
+
+function letterChipEl(hostname, size = 16) {
+  const letter = (hostname || '?').replace(/^www\./, '').charAt(0).toUpperCase();
+  return el('span', {
+    class: 'favicon-letter',
+    style: {
+      display: 'inline-block',
+      width: size + 'px',
+      height: size + 'px',
+      lineHeight: size + 'px',
+      textAlign: 'center',
+      background: 'var(--border)',
+      color: 'var(--muted)',
+      borderRadius: '50%',
+      fontSize: Math.floor(size * 0.65) + 'px',
+      fontWeight: '500',
+      verticalAlign: '-2px'
+    }
+  }, letter);
+}
+
+/* ----------------------------------------------------------------
    TOAST CONTROLLER
    Object API: showToast({ message, actionLabel?, onAction?, durationMs? })
    - message: required string
@@ -891,28 +971,6 @@ function checkTabOutDupes() {
    OVERFLOW CHIPS ("+N more" expand button in domain cards)
    ---------------------------------------------------------------- */
 
-function temporaryFaviconChip(url, size = 14) {
-  let domain = '';
-  try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-  const firstLetter = (domain || '?').charAt(0).toUpperCase();
-  return el('span', {
-    class: 'favicon-letter-temp',
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: size + 'px',
-      height: size + 'px',
-      background: 'var(--warm-gray)',
-      color: 'var(--muted)',
-      borderRadius: '50%',
-      fontSize: Math.floor(size * 0.65) + 'px',
-      fontWeight: '500',
-      flexShrink: '0'
-    }
-  }, firstLetter);
-}
-
 function buildPageChip(tab, label, count) {
   const chip = el('div', {
     class: `page-chip clickable${count > 1 ? ' chip-has-dupes' : ''}`,
@@ -920,7 +978,7 @@ function buildPageChip(tab, label, count) {
     'data-tab-url': tab.url,
     title: label
   }, [
-    temporaryFaviconChip(tab.url, 14),
+    faviconEl(tab.url, 14),
     el('span', { class: 'chip-text' }, label),
     count > 1 ? el('span', { class: 'chip-dupe-badge' }, `(${count}x)`) : null
   ]);
@@ -1211,7 +1269,6 @@ function renderDeferredItem(item) {
   let domain = '';
   try { domain = new URL(item.url).hostname.replace(/^www\./, ''); } catch {}
   const ago = timeAgo(item.savedAt);
-  const firstLetter = (domain || '?').charAt(0).toUpperCase();
 
   const checkbox = el('input', {
     type: 'checkbox',
@@ -1220,22 +1277,7 @@ function renderDeferredItem(item) {
     'data-deferred-id': item.id
   });
 
-  const favicon = el('span', {
-    class: 'favicon-letter-temp',
-    style: {
-      display: 'inline-block',
-      width: '14px',
-      height: '14px',
-      lineHeight: '14px',
-      textAlign: 'center',
-      background: 'var(--warm-gray)',
-      color: 'var(--muted)',
-      borderRadius: '50%',
-      fontSize: '9px',
-      fontWeight: '500',
-      verticalAlign: '-2px'
-    }
-  }, firstLetter);
+  const favicon = faviconEl(item.url, 14);
 
   const titleLink = el('a', {
     href: item.url,
@@ -1785,6 +1827,7 @@ document.addEventListener('input', async (e) => {
 async function initApp() {
   await initSidebarState();
   installStorageSync();
+  await ensureFaviconPermission();
   await renderDashboard();
 }
 
