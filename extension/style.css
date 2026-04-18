@@ -1196,6 +1196,60 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   flex: 1;
 }
 
+.session-tab-list {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.session-tab-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.session-tab-row:hover { background: var(--hover); }
+
+.session-tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.session-tab-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 6px;
+  border-radius: 4px;
+}
+
+.session-tab-close:hover { background: var(--hover); color: var(--fg); }
+
+.session-empty-state {
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.session-empty-delete {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font: inherit;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
 /* On narrow screens, stack vertically */
 @media (max-width: 800px) {
   .dashboard-columns {

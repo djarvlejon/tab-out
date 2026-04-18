@@ -1745,6 +1745,7 @@ async function renderSessionsPane() {
 
 function renderSessionCard(session) {
   const isSnapshot = session.kind === 'snapshot';
+  const isExpanded = _expandedSessions.has(session.id);
 
   // Title line
   const title = el('span', { class: 'session-name' }, [
@@ -1781,14 +1782,58 @@ function renderSessionCard(session) {
     (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16))
   );
 
+  const children = [header, meta, faviconRow];
+
+  if (isExpanded) {
+    if (session.tabs.length === 0) {
+      children.push(el('div', { class: 'session-empty-state' }, [
+        textNode('0 tabs (all removed)'),
+        el('button', {
+          class: 'session-empty-delete',
+          'data-action': 'session-delete',
+          'data-session-id': session.id
+        }, 'Delete session')
+      ]));
+    } else {
+      const list = el('div', { class: 'session-tab-list' },
+        session.tabs.map((t, i) => renderSessionTabRow(session.id, t, i)));
+      children.push(list);
+    }
+  }
+
+  // Flip chevron character when expanded
+  chevron.textContent = isExpanded ? '▾' : '▸';
+
   const card = el('div', {
     class: 'session-card' + (isSnapshot ? ' session-card-snapshot' : ''),
     'data-action': 'session-reopen',
     'data-session-id': session.id,
     'data-session-kind': session.kind
-  }, [header, meta, faviconRow]);
+  }, children);
 
   return card;
+}
+
+function renderSessionTabRow(sessionId, tab, tabIndex) {
+  const closeBtn = el('button', {
+    class: 'session-tab-close',
+    'data-action': 'session-tab-remove',
+    'data-session-id': sessionId,
+    'data-tab-index': String(tabIndex),
+    title: 'Remove from session'
+  }, '✕');
+
+  return el('div', {
+    class: 'session-tab-row',
+    'data-action': 'session-tab-open',
+    'data-session-id': sessionId,
+    'data-tab-index': String(tabIndex)
+  }, [
+    faviconEl(tab.url, 14),
+    textNode(' '),
+    el('span', { class: 'session-tab-title' }, tab.title || tab.url),
+    closeBtn
+  ]);
 }
 
 function renderSessionsSearch() {
@@ -1801,6 +1846,7 @@ function renderSessionsSearch() {
 }
 
 let _openKebab = null;
+const _expandedSessions = new Set();
 
 async function openSessionKebab(sessionId, anchorEl) {
   closeSessionKebab();
@@ -1834,7 +1880,11 @@ async function _getSessionById(id) {
   return items.find(s => s.id === id);
 }
 
-function toggleSessionExpand() {}
+function toggleSessionExpand(sessionId) {
+  if (_expandedSessions.has(sessionId)) _expandedSessions.delete(sessionId);
+  else _expandedSessions.add(sessionId);
+  renderSessionsPane();
+}
 
 async function promptRenameSession(id) {
   const card = document.querySelector(`.session-card[data-session-id="${id}"]`);
@@ -2504,7 +2554,7 @@ document.addEventListener('click', async (e) => {
   if (action === 'session-toggle-expand') {
     e.preventDefault();
     e.stopPropagation();
-    if (typeof toggleSessionExpand === 'function') toggleSessionExpand(actionEl.dataset.sessionId);
+    toggleSessionExpand(actionEl.dataset.sessionId);
     return;
   }
 
@@ -2578,6 +2628,48 @@ document.addEventListener('click', async (e) => {
     } catch (e2) {
       showToast({ message: 'Couldn\'t delete — see console.' });
       console.error('[tab-out] delete failed', e2);
+    }
+    return;
+  }
+
+  if (action === 'session-tab-open') {
+    e.preventDefault();
+    e.stopPropagation();
+    const sid = actionEl.dataset.sessionId;
+    const idx = parseInt(actionEl.dataset.tabIndex, 10);
+    const { items } = await readSessions();
+    const s = items.find(x => x.id === sid);
+    if (!s || !s.tabs[idx]) return;
+    const url = s.tabs[idx].url;
+    if (!ALLOWED_SCHEMES.test(url)) {
+      showToast({ message: 'Cannot open — invalid URL scheme.' });
+      return;
+    }
+    const w = await chrome.windows.getCurrent();
+    await chrome.tabs.create({ url, windowId: w.id, active: true });
+    showToast({ message: 'Opened tab' });
+    return;
+  }
+
+  if (action === 'session-tab-remove') {
+    e.preventDefault();
+    e.stopPropagation();
+    const sid = actionEl.dataset.sessionId;
+    const idx = parseInt(actionEl.dataset.tabIndex, 10);
+    try {
+      const record = await removeTabFromSession(sid, idx);
+      showToast({
+        message: 'Tab removed',
+        actionLabel: 'Undo',
+        onAction: async () => {
+          await trashRestore(record.trashId);
+          renderSessionsPane();
+        }
+      });
+      renderSessionsPane();
+    } catch (e2) {
+      showToast({ message: 'Couldn\'t remove tab — see console.' });
+      console.error('[tab-out] remove tab failed', e2);
     }
     return;
   }
