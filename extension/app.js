@@ -515,15 +515,19 @@ async function writeSnapshotSession({ tabs, groups, summary }) {
     const filtered2 = items2.filter(s => s.id !== SNAPSHOT_ID);
     const ok2 = await setSessionsIfUnchanged(wt2, [snapshot2, ...filtered2]);
     if (!ok2) throw new Error('write-conflict');
+    let trashId = null;
     if (previous2) {
-      await trashAdd({ reason: 'snapshot-overwritten', session: previous2 });
+      const trashRecord = await trashAdd({ reason: 'snapshot-overwritten', session: previous2 });
+      trashId = trashRecord.trashId;
     }
-    return { snapshot: snapshot2, previous: previous2 };
+    return { snapshot: snapshot2, previous: previous2, trashId };
   }
+  let trashId = null;
   if (previous) {
-    await trashAdd({ reason: 'snapshot-overwritten', session: previous });
+    const trashRecord = await trashAdd({ reason: 'snapshot-overwritten', session: previous });
+    trashId = trashRecord.trashId;
   }
-  return { snapshot, previous };
+  return { snapshot, previous, trashId };
 }
 
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
@@ -627,12 +631,14 @@ async function readTrash() {
     return Number.isFinite(age) && age >= 0 && age < TRASH_RETENTION_MS;
   });
   if (kept.length !== raw.length) {
+    _trashSelfWriteSuppress++;
     await chrome.storage.local.set({ sessionsTrash: { schemaVersion: TRASH_SCHEMA_VERSION, items: kept } });
   }
   return { schemaVersion: TRASH_SCHEMA_VERSION, items: kept };
 }
 
 async function writeTrash(items) {
+  _trashSelfWriteSuppress++;
   await chrome.storage.local.set({ sessionsTrash: { schemaVersion: TRASH_SCHEMA_VERSION, items } });
 }
 
@@ -968,6 +974,7 @@ function textNode(str) {
 
 let _lastSelfWriteToken = null;
 let _deferredSelfWriteSuppress = 0;
+let _trashSelfWriteSuppress = 0;
 
 function newWriteToken() {
   const t = 'wt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -987,6 +994,10 @@ function installStorageSync() {
       updateSidebarVisibility();
     }
     if (changes.sessionsTrash) {
+      if (_trashSelfWriteSuppress > 0) {
+        _trashSelfWriteSuppress--;
+        return;
+      }
       renderTrashPane();
       updateSidebarVisibility();
     }
@@ -1846,6 +1857,13 @@ async function openSaveOverlay({ capture, prefilledName }) {
   input.focus();
   input.select();
 
+  overlay.onkeydown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSaveOverlay();
+    }
+  };
+
   const onInput = async () => {
     const trimmed = input.value.trim();
     if (!trimmed) {
@@ -1867,13 +1885,14 @@ async function openSaveOverlay({ capture, prefilledName }) {
 
   input.onkeydown = (e) => {
     if (e.key === 'Enter') { e.preventDefault(); if (!saveBtn.disabled) saveBtn.click(); }
-    if (e.key === 'Escape') { e.preventDefault(); closeSaveOverlay(); }
   };
 }
 
 function closeSaveOverlay() {
   _activeSaveOverlay = null;
-  document.getElementById('saveOverlay').style.display = 'none';
+  const overlay = document.getElementById('saveOverlay');
+  overlay.onkeydown = null;
+  overlay.style.display = 'none';
 }
 
 async function confirmSaveOverlay() {
@@ -1914,7 +1933,7 @@ async function quickSaveFromOverlay() {
   try {
     capture = await prepareCaptureForSave(capture);
     _activeSaveOverlay.capture = capture;
-    const { previous } = await writeSnapshotSession({ tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
+    const { previous, trashId } = await writeSnapshotSession({ tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
     closeSaveOverlay();
     const skipped = Number.isFinite(capture.skipped) ? capture.skipped : 0;
     const msg = skipped > 0
@@ -1922,11 +1941,9 @@ async function quickSaveFromOverlay() {
       : `Snapshot saved · ${capture.tabs.length} tabs`;
     showToast({
       message: msg,
-      actionLabel: previous ? 'Undo' : undefined,
-      onAction: previous ? async () => {
-        const trash = await readTrash();
-        const target = trash.items.find(r => r.reason === 'snapshot-overwritten' && r.session && r.session.savedAt === previous.savedAt);
-        if (target) await trashRestore(target.trashId);
+      actionLabel: previous && trashId ? 'Undo' : undefined,
+      onAction: previous && trashId ? async () => {
+        await trashRestore(trashId);
         renderSessionsPane();
       } : undefined
     });
