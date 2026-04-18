@@ -15,6 +15,12 @@
 
 'use strict';
 
+document.querySelectorAll('script[data-optional="true"]').forEach(s => {
+  s.addEventListener('error', () => {
+    // Optional config file absent — that's fine.
+  });
+});
+
 
 /* ----------------------------------------------------------------
    CHROME TABS — Direct API Access
