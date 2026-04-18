@@ -420,6 +420,19 @@ async function setSessionsIfUnchanged(expectedWriteToken, newItems) {
   return true;
 }
 
+async function writeSessionsAndTrashAtomic({ sessionsItems, expectedSessionsToken, trashItems }) {
+  const { sessions } = await chrome.storage.local.get('sessions');
+  const currentSessionsToken = sessions ? (sessions.writeToken || null) : null;
+  if (currentSessionsToken !== expectedSessionsToken) return false;
+  const newToken = newWriteToken();
+  _trashSelfWriteSuppress++;
+  await chrome.storage.local.set({
+    sessions: { schemaVersion: SESSION_SCHEMA_VERSION, items: sessionsItems, writeToken: newToken },
+    sessionsTrash: { schemaVersion: TRASH_SCHEMA_VERSION, items: trashItems }
+  });
+  return true;
+}
+
 // Update an existing session using optimistic retry (storage has no atomic CAS); retries up to 3 times on conflict.
 async function updateSession(id, mutator) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -500,34 +513,25 @@ function buildSnapshotSession({ existing, tabs, groups, summary }) {
 }
 
 async function writeSnapshotSession({ tabs, groups, summary }) {
-  const { items, writeToken } = await readSessions();
-  const existing = items.find(s => s.id === SNAPSHOT_ID);
-  const previous = existing ? structuredClone(existing) : null;
-  const snapshot = buildSnapshotSession({ existing, tabs, groups, summary });
-  const filtered = items.filter(s => s.id !== SNAPSHOT_ID);
-  const newItems = [snapshot, ...filtered];
-  const ok = await setSessionsIfUnchanged(writeToken, newItems);
-  if (!ok) {
-    const { items: items2, writeToken: wt2 } = await readSessions();
-    const existing2 = items2.find(s => s.id === SNAPSHOT_ID);
-    const previous2 = existing2 ? structuredClone(existing2) : null;
-    const snapshot2 = buildSnapshotSession({ existing: existing2, tabs, groups, summary });
-    const filtered2 = items2.filter(s => s.id !== SNAPSHOT_ID);
-    const ok2 = await setSessionsIfUnchanged(wt2, [snapshot2, ...filtered2]);
-    if (!ok2) throw new Error('write-conflict');
-    let trashId = null;
-    if (previous2) {
-      const trashRecord = await trashAdd({ reason: 'snapshot-overwritten', session: previous2 });
-      trashId = trashRecord.trashId;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [{ items, writeToken }, { items: trashItems }] = await Promise.all([readSessions(), readTrash()]);
+    const existing = items.find(s => s.id === SNAPSHOT_ID);
+    const previous = existing ? structuredClone(existing) : null;
+    const snapshot = buildSnapshotSession({ existing, tabs, groups, summary });
+    const filtered = items.filter(s => s.id !== SNAPSHOT_ID);
+    const overwrittenRecord = previous
+      ? buildTrashRecord({ reason: 'snapshot-overwritten', session: previous })
+      : null;
+    const ok = await writeSessionsAndTrashAtomic({
+      sessionsItems: [snapshot, ...filtered],
+      expectedSessionsToken: writeToken,
+      trashItems: overwrittenRecord ? prependTrashRecord(trashItems, overwrittenRecord) : trashItems
+    });
+    if (ok) {
+      return { snapshot, overwrittenTrashId: overwrittenRecord ? overwrittenRecord.trashId : null };
     }
-    return { snapshot: snapshot2, previous: previous2, trashId };
   }
-  let trashId = null;
-  if (previous) {
-    const trashRecord = await trashAdd({ reason: 'snapshot-overwritten', session: previous });
-    trashId = trashRecord.trashId;
-  }
-  return { snapshot, previous, trashId };
+  throw new Error('write-conflict');
 }
 
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
@@ -578,13 +582,19 @@ async function duplicateSession(id) {
 }
 
 async function deleteSession(id) {
-  const { items } = await readSessions();
-  const target = items.find(s => s.id === id);
-  if (!target) return;
-  const preserved = structuredClone(target);
-  await removeSession(id);
-  await trashAdd({ reason: 'deleted', session: preserved });
-  return preserved;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [{ items, writeToken }, { items: trashItems }] = await Promise.all([readSessions(), readTrash()]);
+    const target = items.find(s => s.id === id);
+    if (!target) return null;
+    const trashRecord = buildTrashRecord({ reason: 'deleted', session: target });
+    const ok = await writeSessionsAndTrashAtomic({
+      sessionsItems: items.filter(s => s.id !== id),
+      expectedSessionsToken: writeToken,
+      trashItems: prependTrashRecord(trashItems, trashRecord)
+    });
+    if (ok) return trashRecord.trashId;
+  }
+  throw new Error('write-conflict');
 }
 
 async function saveAsNamedSession({ fromSnapshotOrId, name: rawName }) {
@@ -642,9 +652,8 @@ async function writeTrash(items) {
   await chrome.storage.local.set({ sessionsTrash: { schemaVersion: TRASH_SCHEMA_VERSION, items } });
 }
 
-async function trashAdd({ reason, session, removedTab, parentSessionId, parentSessionName }) {
-  const { items } = await readTrash();
-  const record = {
+function buildTrashRecord({ reason, session, removedTab, parentSessionId, parentSessionName }) {
+  return {
     trashId: 'tr_' + ulid(),
     trashedAt: new Date().toISOString(),
     reason,
@@ -653,9 +662,17 @@ async function trashAdd({ reason, session, removedTab, parentSessionId, parentSe
     parentSessionId: parentSessionId != null ? parentSessionId : undefined,
     parentSessionName: parentSessionName != null ? parentSessionName : undefined
   };
-  let newItems = [record, ...items];
-  if (newItems.length > TRASH_MAX_ITEMS) newItems = newItems.slice(0, TRASH_MAX_ITEMS);
-  await writeTrash(newItems);
+}
+
+function prependTrashRecord(items, record) {
+  const next = [record, ...items];
+  return next.length > TRASH_MAX_ITEMS ? next.slice(0, TRASH_MAX_ITEMS) : next;
+}
+
+async function trashAdd({ reason, session, removedTab, parentSessionId, parentSessionName }) {
+  const { items } = await readTrash();
+  const record = buildTrashRecord({ reason, session, removedTab, parentSessionId, parentSessionName });
+  await writeTrash(prependTrashRecord(items, record));
   return record;
 }
 
@@ -747,27 +764,41 @@ function computeSummary(tabs) {
 }
 
 async function removeTabFromSession(sessionId, tabIndex) {
-  let removedTab = null;
-  let parentSessionName = '';
-  await updateSession(sessionId, s => {
-    if (!s.tabs[tabIndex]) throw new Error('gone');
-    removedTab = structuredClone({ ...s.tabs[tabIndex], index: tabIndex });
-    parentSessionName = s.name;
-    const removedGroupKey = s.tabs[tabIndex].savedGroupKey;
-    s.tabs.splice(tabIndex, 1);
-    if (removedGroupKey != null && !s.tabs.some(tab => tab.savedGroupKey === removedGroupKey)) {
-      delete s.groups[removedGroupKey];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [{ items, writeToken }, { items: trashItems }] = await Promise.all([readSessions(), readTrash()]);
+    const idx = items.findIndex(s => s.id === sessionId);
+    if (idx === -1) throw new Error('session-gone');
+    const current = items[idx];
+    if (!current.tabs[tabIndex]) throw new Error('gone');
+
+    const updated = structuredClone(current);
+    const removedTab = structuredClone({ ...updated.tabs[tabIndex], index: tabIndex });
+    const removedGroupKey = updated.tabs[tabIndex].savedGroupKey;
+    updated.tabs.splice(tabIndex, 1);
+    if (removedGroupKey != null && !updated.tabs.some(tab => tab.savedGroupKey === removedGroupKey)) {
+      delete updated.groups[removedGroupKey];
       removedTab.savedGroupKey = null;
     }
-    s.summary = computeSummary(s.tabs);
-    return s;
-  });
-  return trashAdd({
-    reason: 'tab-removed',
-    removedTab,
-    parentSessionId: sessionId,
-    parentSessionName
-  });
+    updated.rev = (current.rev || 0) + 1;
+    updated.updatedAt = new Date().toISOString();
+    updated.summary = computeSummary(updated.tabs);
+
+    const trashRecord = buildTrashRecord({
+      reason: 'tab-removed',
+      removedTab,
+      parentSessionId: sessionId,
+      parentSessionName: current.name
+    });
+    const nextSessions = items.slice();
+    nextSessions[idx] = updated;
+    const ok = await writeSessionsAndTrashAtomic({
+      sessionsItems: nextSessions,
+      expectedSessionsToken: writeToken,
+      trashItems: prependTrashRecord(trashItems, trashRecord)
+    });
+    if (ok) return trashRecord.trashId;
+  }
+  throw new Error('write-conflict');
 }
 
 
@@ -2167,7 +2198,7 @@ async function quickSaveFromOverlay() {
   try {
     capture = await prepareCaptureForSave(capture);
     _activeSaveOverlay.capture = capture;
-    const { previous, trashId } = await writeSnapshotSession({ tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
+    const { overwrittenTrashId } = await writeSnapshotSession({ tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
     closeSaveOverlay();
     const skipped = Number.isFinite(capture.skipped) ? capture.skipped : 0;
     const msg = skipped > 0
@@ -2175,9 +2206,9 @@ async function quickSaveFromOverlay() {
       : `Snapshot saved · ${capture.tabs.length} tabs`;
     showToast({
       message: msg,
-      actionLabel: previous && trashId ? 'Undo' : undefined,
-      onAction: previous && trashId ? async () => {
-        await trashRestore(trashId);
+      actionLabel: overwrittenTrashId ? 'Undo' : undefined,
+      onAction: overwrittenTrashId ? async () => {
+        await trashRestore(overwrittenTrashId);
         renderSessionsPane();
       } : undefined
     });
@@ -2611,17 +2642,15 @@ document.addEventListener('click', async (e) => {
     closeSessionKebab();
     const id = actionEl.dataset.sessionId;
     try {
-      await deleteSession(id);
+      const trashId = await deleteSession(id);
       showToast({
         message: 'Deleted',
-        actionLabel: 'Undo',
-        onAction: async () => {
-          const trash = await readTrash();
-          const rec = trash.items.find(r => r.reason === 'deleted' && r.session && r.session.id === id);
-          if (rec) await trashRestore(rec.trashId);
+        actionLabel: trashId ? 'Undo' : undefined,
+        onAction: trashId ? async () => {
+          await trashRestore(trashId);
           renderSessionsPane();
           renderTrashPane();
-        }
+        } : undefined
       });
       renderSessionsPane();
       renderTrashPane();
@@ -2657,14 +2686,14 @@ document.addEventListener('click', async (e) => {
     const sid = actionEl.dataset.sessionId;
     const idx = parseInt(actionEl.dataset.tabIndex, 10);
     try {
-      const record = await removeTabFromSession(sid, idx);
+      const trashId = await removeTabFromSession(sid, idx);
       showToast({
         message: 'Tab removed',
-        actionLabel: 'Undo',
-        onAction: async () => {
-          await trashRestore(record.trashId);
+        actionLabel: trashId ? 'Undo' : undefined,
+        onAction: trashId ? async () => {
+          await trashRestore(trashId);
           renderSessionsPane();
-        }
+        } : undefined
       });
       renderSessionsPane();
     } catch (e2) {
