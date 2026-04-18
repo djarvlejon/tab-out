@@ -324,22 +324,29 @@ function renderArchiveItem(item) {
 
 - [ ] **Step 4: Update the callers to append DOM nodes instead of setting innerHTML**
 
-Find `renderDeferredList` (grep for `function renderDeferredList`). It currently does:
+The function in this repo is `renderDeferredColumn` (grep `function renderDeferredColumn`). Inside it, find:
 
 ```js
-const active = deferred.filter(d => !d.completedAt && !d.dismissedAt);
-const html = active.map(renderDeferredItem).join('');
-listEl.innerHTML = html;
+list.innerHTML = active.map(item => renderDeferredItem(item)).join('');
 ```
 
 Replace with:
 
 ```js
-const active = deferred.filter(d => !d.completedAt && !d.dismissedAt);
-listEl.replaceChildren(...active.map(renderDeferredItem));
+list.replaceChildren(...active.map(item => renderDeferredItem(item)));
 ```
 
-Do the same for the archive list rendering in the same function (search for `renderArchiveItem`).
+Then find:
+
+```js
+archiveList.innerHTML = archived.map(item => renderArchiveItem(item)).join('');
+```
+
+Replace with:
+
+```js
+archiveList.replaceChildren(...archived.map(item => renderArchiveItem(item)));
+```
 
 - [ ] **Step 5: Verify**
 
@@ -792,9 +799,15 @@ if (pillBtn) {
 
 Call `initSidebarState()` from the page-init code (search for `DOMContentLoaded` or the top-level `async function init` — add `await initSidebarState();` before the first render).
 
-- [ ] **Step 4: Move existing Deferred render into `renderDeferredPane`**
+- [ ] **Step 4: Rename `renderDeferredColumn` to `renderDeferredPane`**
 
-Wrap the existing Deferred-rendering code (currently in the main render function around line 1167) in a named function `renderDeferredPane()`. Leave the Deferred DOM exactly the same; just rehome the code.
+The existing async function `renderDeferredColumn()` already exists as a standalone render entry point. Simply rename it and all call sites. Grep:
+
+```bash
+grep -n "renderDeferredColumn" extension/app.js
+```
+
+Rename every occurrence to `renderDeferredPane`. The function body stays the same.
 
 - [ ] **Step 5: Verify**
 
