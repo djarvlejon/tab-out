@@ -430,6 +430,57 @@ function animateCardOut(card) {
   }, 300);
 }
 
+/* ----------------------------------------------------------------
+   DOM HELPERS — use these for ALL user-controlled text.
+   Rule: never pass user-controlled strings into innerHTML.
+   el() creates elements with attrs + children; textNode() wraps strings.
+   ---------------------------------------------------------------- */
+
+/**
+ * el(tag, attrs, children)
+ * Create an HTMLElement with attributes and children.
+ * - attrs: object. Keys starting with "on" are attached as event listeners.
+ *         Keys "class" / "className" set className. "style" expects an object
+ *         of camelCase properties.
+ * - children: string | Node | array of (string | Node).
+ *   Strings are wrapped in a text node; arrays are appended in order.
+ */
+function el(tag, attrs, children) {
+  const node = document.createElement(tag);
+  if (attrs) {
+    for (const key in attrs) {
+      const v = attrs[key];
+      if (v == null || v === false) continue;
+      if (key === 'class' || key === 'className') { node.className = v; continue; }
+      if (key === 'style' && typeof v === 'object') {
+        for (const s in v) node.style[s] = v[s];
+        continue;
+      }
+      if (key.startsWith('on') && typeof v === 'function') {
+        node.addEventListener(key.slice(2).toLowerCase(), v);
+        continue;
+      }
+      if (v === true) { node.setAttribute(key, ''); continue; }
+      node.setAttribute(key, v);
+    }
+  }
+  if (children != null) {
+    const list = Array.isArray(children) ? children : [children];
+    for (const child of list) {
+      if (child == null || child === false) continue;
+      node.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+  }
+  return node;
+}
+
+/**
+ * textNode(str) — convenience wrapper for a text node.
+ */
+function textNode(str) {
+  return document.createTextNode(str == null ? '' : String(str));
+}
+
 /**
  * showToast(message)
  *
