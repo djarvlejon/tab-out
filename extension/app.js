@@ -481,16 +481,65 @@ function textNode(str) {
   return document.createTextNode(str == null ? '' : String(str));
 }
 
-/**
- * showToast(message)
- *
- * Brief pop-up notification at the bottom of the screen.
- */
-function showToast(message) {
+/* ----------------------------------------------------------------
+   TOAST CONTROLLER
+   Object API: showToast({ message, actionLabel?, onAction?, durationMs? })
+   - message: required string
+   - actionLabel: optional string — if present, a clickable button is shown
+   - onAction: optional function — called when the action is clicked
+   - durationMs: auto-dismiss timer (default 4000; 10000 for actionable toasts)
+   Toasts queue: one visible at a time; next fires after current dismisses.
+   ---------------------------------------------------------------- */
+
+const _toastQueue = [];
+let _toastActive = false;
+let _toastTimer = null;
+
+function showToast(argOrMessage) {
+  // Back-compat: showToast('string') still works.
+  const arg = typeof argOrMessage === 'string' ? { message: argOrMessage } : argOrMessage;
+  _toastQueue.push(arg);
+  if (!_toastActive) _toastPump();
+}
+
+function _toastPump() {
+  const next = _toastQueue.shift();
+  if (!next) { _toastActive = false; return; }
+  _toastActive = true;
+
+  const { message, actionLabel, onAction, durationMs } = next;
+  const effectiveDuration = durationMs != null
+    ? durationMs
+    : (actionLabel ? 10000 : 4000);
+
   const toast = document.getElementById('toast');
-  document.getElementById('toastText').textContent = message;
+  const textEl = document.getElementById('toastText');
+  const actionSlot = document.getElementById('toastAction');
+
+  textEl.textContent = message;
+  actionSlot.replaceChildren();
+
+  if (actionLabel) {
+    const btn = el('button', {
+      class: 'toast-action',
+      onClick: () => {
+        try { onAction && onAction(); } catch (e) { console.warn('[tab-out] toast action threw', e); }
+        _toastDismiss();
+      }
+    }, actionLabel);
+    actionSlot.appendChild(btn);
+  }
+
   toast.classList.add('visible');
-  setTimeout(() => toast.classList.remove('visible'), 2500);
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(_toastDismiss, effectiveDuration);
+}
+
+function _toastDismiss() {
+  clearTimeout(_toastTimer);
+  const toast = document.getElementById('toast');
+  toast.classList.remove('visible');
+  setTimeout(_toastPump, 320);
 }
 
 /**
