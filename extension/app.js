@@ -567,6 +567,149 @@ async function saveAsNamedSession({ fromSnapshotOrId, name }) {
   return created;
 }
 
+/* ----------------------------------------------------------------
+   TRASH — 7-day retention, 50-item cap, lazy-purge on read
+   ---------------------------------------------------------------- */
+
+const TRASH_MAX_ITEMS = 50;
+const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function readTrash() {
+  const { sessionsTrash } = await chrome.storage.local.get('sessionsTrash');
+  if (!sessionsTrash || typeof sessionsTrash !== 'object') {
+    return { schemaVersion: TRASH_SCHEMA_VERSION, items: [] };
+  }
+  const raw = Array.isArray(sessionsTrash.items) ? sessionsTrash.items : [];
+  const now = Date.now();
+  const kept = raw.filter(item => {
+    const age = now - new Date(item.trashedAt).getTime();
+    return Number.isFinite(age) && age >= 0 && age < TRASH_RETENTION_MS;
+  });
+  if (kept.length !== raw.length) {
+    await chrome.storage.local.set({ sessionsTrash: { schemaVersion: TRASH_SCHEMA_VERSION, items: kept } });
+  }
+  return { schemaVersion: TRASH_SCHEMA_VERSION, items: kept };
+}
+
+async function writeTrash(items) {
+  await chrome.storage.local.set({ sessionsTrash: { schemaVersion: TRASH_SCHEMA_VERSION, items } });
+}
+
+async function trashAdd({ reason, session, removedTab }) {
+  const { items } = await readTrash();
+  const record = {
+    trashId: 'tr_' + ulid(),
+    trashedAt: new Date().toISOString(),
+    reason,
+    session: session ? structuredClone(session) : undefined,
+    removedTab: removedTab ? structuredClone(removedTab) : undefined
+  };
+  let newItems = [record, ...items];
+  if (newItems.length > TRASH_MAX_ITEMS) newItems = newItems.slice(0, TRASH_MAX_ITEMS);
+  await writeTrash(newItems);
+  return record;
+}
+
+async function trashDrop(trashId) {
+  const { items } = await readTrash();
+  await writeTrash(items.filter(r => r.trashId !== trashId));
+}
+
+async function trashRestore(trashId) {
+  const { items } = await readTrash();
+  const record = items.find(r => r.trashId === trashId);
+  if (!record) return null;
+
+  if (record.reason === 'deleted' && record.session) {
+    const { items: sessionItems } = await readSessions();
+    const taken = new Set(sessionItems.filter(s => s.kind === 'named').map(s => normalizeName(s.name)));
+    let name = record.session.name;
+    if (taken.has(normalizeName(name))) {
+      let n = 1;
+      let candidate = `${name} (restored)`;
+      while (taken.has(normalizeName(candidate))) {
+        candidate = `${name} (restored ${++n})`;
+      }
+      name = candidate;
+    }
+    const restored = structuredClone(record.session);
+    restored.id = ulid();
+    restored.rev = 0;
+    restored.name = name;
+    restored.updatedAt = new Date().toISOString();
+    await appendSession(restored);
+  } else if (record.reason === 'snapshot-overwritten' && record.session) {
+    await writeSnapshotSession({
+      tabs: record.session.tabs,
+      groups: record.session.groups,
+      summary: record.session.summary
+    });
+  } else if (record.reason === 'tab-removed' && record.removedTab) {
+    const parentId = record.parentSessionId;
+    const { items: sessionItems } = await readSessions();
+    const parent = sessionItems.find(s => s.id === parentId);
+    if (!parent) {
+      const tabs = [record.removedTab];
+      await createNamedSession({
+        name: `Recovered tab · ${timeAgo(record.trashedAt)}`,
+        tabs,
+        groups: {},
+        summary: computeSummary(tabs)
+      });
+    } else {
+      await updateSession(parentId, s => {
+        const t = structuredClone(record.removedTab);
+        const insertAt = Math.min(Math.max(0, t.index), s.tabs.length);
+        s.tabs.splice(insertAt, 0, t);
+        s.summary = computeSummary(s.tabs);
+        return s;
+      });
+    }
+  }
+
+  await trashDrop(trashId);
+  return record;
+}
+
+function computeSummary(tabs) {
+  const counts = new Map();
+  for (const t of tabs) {
+    let host = '';
+    try { host = new URL(t.url).hostname.replace(/^www\./, ''); } catch {}
+    counts.set(host, (counts.get(host) || 0) + 1);
+  }
+  const hosts = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 4)
+    .map(([hostname, count]) => ({ hostname, count }));
+  return {
+    tabCount: tabs.length,
+    uniqueDomains: counts.size,
+    topDomains: hosts
+  };
+}
+
+async function removeTabFromSession(sessionId, tabIndex) {
+  const { items } = await readSessions();
+  const src = items.find(s => s.id === sessionId);
+  if (!src || !src.tabs[tabIndex]) throw new Error('gone');
+  const removedTab = src.tabs[tabIndex];
+  const record = await trashAdd({
+    reason: 'tab-removed',
+    removedTab: { ...removedTab, index: tabIndex }
+  });
+  const trash = await readTrash();
+  const updated = trash.items.map(r => r.trashId === record.trashId ? { ...r, parentSessionId: sessionId } : r);
+  await writeTrash(updated);
+
+  await updateSession(sessionId, s => {
+    s.tabs.splice(tabIndex, 1);
+    s.summary = computeSummary(s.tabs);
+    return s;
+  });
+  return record;
+}
+
 
 /* ----------------------------------------------------------------
    UI HELPERS
