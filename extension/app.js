@@ -405,7 +405,11 @@ async function readSessions() {
 async function quarantineSessions(invalid) {
   const { sessionsQuarantine = { items: [] } } = await chrome.storage.local.get('sessionsQuarantine');
   const existing = Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
-  existing.push(...invalid.map(raw => ({ quarantinedAt: new Date().toISOString(), raw })));
+  existing.push(...invalid.map(raw => ({
+    quarantineId: 'qrn_' + ulid(),
+    quarantinedAt: new Date().toISOString(),
+    raw
+  })));
   await chrome.storage.local.set({ sessionsQuarantine: { items: existing } });
 }
 
@@ -2167,26 +2171,132 @@ function renderTrashTabCard(record) {
 
 async function readSessionsQuarantineItems() {
   const { sessionsQuarantine } = await chrome.storage.local.get('sessionsQuarantine');
-  return sessionsQuarantine && Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
+  const rawItems = sessionsQuarantine && Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
+  const needsMigration = rawItems.some(item =>
+    !item
+    || typeof item !== 'object'
+    || Array.isArray(item)
+    || typeof item.quarantineId !== 'string'
+    || !item.quarantineId
+    || typeof item.quarantinedAt !== 'string'
+    || !Object.prototype.hasOwnProperty.call(item, 'raw')
+  );
+  if (!needsMigration) return rawItems;
+
+  const items = rawItems.map(item => ({
+    quarantineId: item && typeof item === 'object' && !Array.isArray(item) && typeof item.quarantineId === 'string' && item.quarantineId
+      ? item.quarantineId
+      : 'qrn_' + ulid(),
+    quarantinedAt: item && typeof item === 'object' && !Array.isArray(item) && typeof item.quarantinedAt === 'string'
+      ? item.quarantinedAt
+      : new Date().toISOString(),
+    raw: item && typeof item === 'object' && !Array.isArray(item) && Object.prototype.hasOwnProperty.call(item, 'raw')
+      ? item.raw
+      : item
+  }));
+  await chrome.storage.local.set({ sessionsQuarantine: { items } });
+  return items;
 }
 
 function appendQuarantineSection(pane, items) {
   if (items.length === 0) return;
 
   pane.appendChild(el('div', { class: 'sessions-divider' }, 'Quarantine'));
-  items.forEach((q, index) => {
+  items.forEach(q => {
     pane.appendChild(el('div', { class: 'trash-card' }, [
       el('div', { class: 'trash-card-title' }, 'Invalid session (schema mismatch)'),
       el('div', { class: 'trash-card-meta' }, 'Quarantined ' + timeAgo(q.quarantinedAt)),
       el('div', { class: 'trash-card-actions' }, [
         el('button', {
+          class: 'trash-restore',
+          'data-action': 'quarantine-restore',
+          'data-quarantine-id': q.quarantineId
+        }, 'Restore'),
+        el('button', {
           class: 'trash-drop',
           'data-action': 'quarantine-drop',
-          'data-quarantine-index': String(index)
+          'data-quarantine-id': q.quarantineId
         }, 'Delete permanently')
       ])
     ]));
   });
+}
+
+async function quarantineRestore(quarantineId) {
+  const items = await readSessionsQuarantineItems();
+  const record = items.find(item => item.quarantineId === quarantineId);
+  if (!record) return null;
+
+  const raw = record && record.raw && typeof record.raw === 'object' && !Array.isArray(record.raw)
+    ? record.raw
+    : {};
+  const now = new Date().toISOString();
+  const { items: sessionItems } = await readSessions();
+  const takenNames = new Set(sessionItems.filter(s => s.kind === 'named').map(s => normalizeName(s.name)));
+  const takenIds = new Set(sessionItems.map(s => s.id));
+
+  let restoredId = (typeof raw.id === 'string' && raw.id) ? raw.id : ulid();
+  if (restoredId === SNAPSHOT_ID || takenIds.has(restoredId)) {
+    restoredId = ulid();
+  }
+
+  let restoredName = (typeof raw.name === 'string' && raw.name.trim()) ? raw.name.trim() : 'Restored session';
+  if (takenNames.has(normalizeName(restoredName))) {
+    let n = 1;
+    let candidate = `${restoredName} (restored)`;
+    while (takenNames.has(normalizeName(candidate))) {
+      candidate = `${restoredName} (restored ${++n})`;
+    }
+    restoredName = candidate;
+  }
+
+  const tabs = Array.isArray(raw.tabs)
+    ? raw.tabs
+      .filter(t => t && typeof t.url === 'string' && /^https?:\/\//i.test(t.url))
+      .map(t => ({
+        url: t.url,
+        title: typeof t.title === 'string'
+          ? t.title
+          : (() => {
+            try { return new URL(t.url).hostname; }
+            catch { return t.url; }
+          })(),
+        favIconUrl: '',
+        pinned: !!t.pinned,
+        index: typeof t.index === 'number' ? t.index : 0,
+        savedGroupKey: null
+      }))
+    : [];
+
+  if (tabs.length === 0) {
+    showToast({ message: 'Cannot restore — no valid tabs.' });
+    return null;
+  }
+
+  const coerced = {
+    id: restoredId,
+    rev: typeof raw.rev === 'number' ? raw.rev : 0,
+    kind: 'named',
+    name: restoredName,
+    savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : now,
+    updatedAt: now,
+    tabs,
+    groups: {}
+  };
+  coerced.summary = computeSummary(coerced.tabs);
+
+  if (!validateSession(coerced)) {
+    showToast({ message: 'Cannot restore — record too corrupted.' });
+    return null;
+  }
+
+  await appendSession(coerced);
+  await chrome.storage.local.set({
+    sessionsQuarantine: {
+      items: items.filter(item => item.quarantineId !== quarantineId)
+    }
+  });
+  return coerced;
 }
 
 async function reopenSession(sessionId) {
@@ -3031,13 +3141,21 @@ document.addEventListener('click', async (e) => {
 
   if (action === 'quarantine-drop') {
     e.preventDefault();
-    const index = parseInt(actionEl.dataset.quarantineIndex, 10);
-    const { sessionsQuarantine } = await chrome.storage.local.get('sessionsQuarantine');
-    const items = Array.isArray(sessionsQuarantine?.items) ? sessionsQuarantine.items.slice() : [];
-    if (Number.isFinite(index) && index >= 0 && index < items.length) {
-      items.splice(index, 1);
-    }
-    await chrome.storage.local.set({ sessionsQuarantine: { items } });
+    const quarantineId = actionEl.dataset.quarantineId;
+    const items = await readSessionsQuarantineItems();
+    await chrome.storage.local.set({
+      sessionsQuarantine: {
+        items: items.filter(item => item.quarantineId !== quarantineId)
+      }
+    });
+    renderTrashPane();
+    return;
+  }
+
+  if (action === 'quarantine-restore') {
+    e.preventDefault();
+    await quarantineRestore(actionEl.dataset.quarantineId);
+    renderSessionsPane();
     renderTrashPane();
     return;
   }
