@@ -2335,14 +2335,19 @@ async function reopenSession(sessionId) {
   let pinFailCount = 0;
   let groupFailCount = 0;
 
-  for (let i = 0; i < valid.length && i < createdTabs.length; i++) {
-    if (valid[i].pinned) {
-      try {
-        await chrome.tabs.update(createdTabs[i].id, { pinned: true });
-      } catch (e) {
-        pinFailCount++;
-        console.warn('[tab-out] pin failed', e);
-      }
+  for (let i = 0; i < valid.length; i++) {
+    const savedTab = valid[i];
+    const createdTab = createdTabs[i];
+    if (!savedTab.pinned) continue;
+    if (!createdTab) {
+      pinFailCount++;
+      continue;
+    }
+    try {
+      await chrome.tabs.update(createdTab.id, { pinned: true });
+    } catch (e) {
+      pinFailCount++;
+      console.warn('[tab-out] pin failed', e);
     }
   }
 
@@ -2350,11 +2355,17 @@ async function reopenSession(sessionId) {
     const granted = await ensureTabGroupsPermission({ prompt: false });
     if (granted) {
       const bySavedKey = new Map();
-      for (let i = 0; i < valid.length && i < createdTabs.length; i++) {
-        const k = valid[i].savedGroupKey;
+      for (let i = 0; i < valid.length; i++) {
+        const savedTab = valid[i];
+        const k = savedTab.savedGroupKey;
         if (!k) continue;
+        const createdTab = createdTabs[i];
+        if (!createdTab) {
+          groupFailCount++;
+          continue;
+        }
         if (!bySavedKey.has(k)) bySavedKey.set(k, []);
-        bySavedKey.get(k).push(createdTabs[i].id);
+        bySavedKey.get(k).push(createdTab.id);
       }
       for (const [savedKey, tabIds] of bySavedKey) {
         const meta = session.groups[savedKey];
@@ -2620,8 +2631,19 @@ async function quickSaveFromOverlay() {
       message: msg,
       actionLabel: overwrittenTrashId ? 'Undo' : undefined,
       onAction: overwrittenTrashId ? async () => {
-        await trashRestore(overwrittenTrashId);
-        renderSessionsPane();
+        try {
+          const restored = await trashRestore(overwrittenTrashId);
+          if (!restored) {
+            showToast({ message: 'That record is no longer in Trash.' });
+            await renderTrashPane();
+            return;
+          }
+          await renderSessionsPane();
+          await renderTrashPane();
+        } catch (restoreError) {
+          showToast({ message: "Couldn't restore — storage error." });
+          console.error('[tab-out] quick-save undo restore failed', restoreError);
+        }
       } : undefined
     });
     await switchSidebarPane('sessions');
@@ -3067,9 +3089,19 @@ document.addEventListener('click', async (e) => {
         message: 'Deleted',
         actionLabel: trashId ? 'Undo' : undefined,
         onAction: trashId ? async () => {
-          await trashRestore(trashId);
-          renderSessionsPane();
-          renderTrashPane();
+          try {
+            const restored = await trashRestore(trashId);
+            if (!restored) {
+              showToast({ message: 'That record is no longer in Trash.' });
+              await renderTrashPane();
+              return;
+            }
+            await renderSessionsPane();
+            await renderTrashPane();
+          } catch (restoreError) {
+            showToast({ message: "Couldn't restore — storage error." });
+            console.error('[tab-out] delete undo restore failed', restoreError);
+          }
         } : undefined
       });
       renderSessionsPane();
@@ -3111,8 +3143,19 @@ document.addEventListener('click', async (e) => {
         message: 'Tab removed',
         actionLabel: trashId ? 'Undo' : undefined,
         onAction: trashId ? async () => {
-          await trashRestore(trashId);
-          renderSessionsPane();
+          try {
+            const restored = await trashRestore(trashId);
+            if (!restored) {
+              showToast({ message: 'That record is no longer in Trash.' });
+              await renderTrashPane();
+              return;
+            }
+            await renderSessionsPane();
+            await renderTrashPane();
+          } catch (restoreError) {
+            showToast({ message: "Couldn't restore — storage error." });
+            console.error('[tab-out] remove-tab undo restore failed', restoreError);
+          }
         } : undefined
       });
       renderSessionsPane();
@@ -3125,10 +3168,20 @@ document.addEventListener('click', async (e) => {
 
   if (action === 'trash-restore') {
     e.preventDefault();
-    await trashRestore(actionEl.dataset.trashId);
-    showToast({ message: 'Restored' });
-    renderSessionsPane();
-    renderTrashPane();
+    try {
+      const restored = await trashRestore(actionEl.dataset.trashId);
+      if (!restored) {
+        showToast({ message: 'That record is no longer in Trash.' });
+        await renderTrashPane();
+        return;
+      }
+      showToast({ message: 'Restored' });
+      await renderSessionsPane();
+      await renderTrashPane();
+    } catch (restoreError) {
+      showToast({ message: "Couldn't restore — storage error." });
+      console.error('[tab-out] trash restore failed', restoreError);
+    }
     return;
   }
 
