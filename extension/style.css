@@ -1108,6 +1108,38 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   margin-bottom: 8px;
 }
 
+.first-save-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(255, 224, 94, 0.12);
+  border: 1px solid rgba(255, 224, 94, 0.35);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--fg);
+  margin-bottom: 12px;
+}
+
+.first-save-banner-text {
+  line-height: 1.5;
+}
+
+.first-save-dismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.first-save-dismiss:hover {
+  background: rgba(26, 22, 19, 0.04);
+}
+
 .session-card {
   border: 1px solid var(--border);
   border-radius: 8px;

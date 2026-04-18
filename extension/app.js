@@ -1803,6 +1803,29 @@ async function renderSessionsPane() {
   updateSidebarVisibility();
 }
 
+async function maybeShowFirstSaveBanner() {
+  const { _tabOutFirstSaveBannerDismissed } = await chrome.storage.local.get('_tabOutFirstSaveBannerDismissed');
+  if (_tabOutFirstSaveBannerDismissed) return;
+
+  const pane = document.getElementById('sessionsPane');
+  if (!pane || pane.querySelector('.first-save-banner')) return;
+
+  const banner = el('div', { class: 'first-save-banner' }, [
+    el('div', { class: 'first-save-banner-text' }, textNode(
+      'Tab Out saves full URLs including query parameters. If a tab contains a password-reset link or other sensitive URL, remove the tab from the session before saving. Your data stays on this device.'
+    )),
+    el('button', {
+      class: 'first-save-dismiss',
+      onClick: async () => {
+        await chrome.storage.local.set({ _tabOutFirstSaveBannerDismissed: true });
+        banner.remove();
+      }
+    }, 'Got it')
+  ]);
+
+  pane.prepend(banner);
+}
+
 function renderSessionCard(session, q = '') {
   const isSnapshot = session.kind === 'snapshot';
   const isExpanded = _expandedSessions.has(session.id);
@@ -2458,8 +2481,9 @@ async function confirmSaveOverlay() {
       ? `Saved · ${capture.tabs.length} tabs (${skipped} skipped)`
       : `Saved · ${capture.tabs.length} tabs`;
     showToast({ message: msg });
-    switchSidebarPane('sessions');
-    renderSessionsPane();
+    await switchSidebarPane('sessions');
+    await renderSessionsPane();
+    await maybeShowFirstSaveBanner();
   } catch (e) {
     if (String(e.message).includes('QuotaExceeded') || String(e.message).includes('quota')) {
       showToast({ message: 'Storage full — empty the Trash or delete old sessions.' });
@@ -2490,8 +2514,9 @@ async function quickSaveFromOverlay() {
         renderSessionsPane();
       } : undefined
     });
-    switchSidebarPane('sessions');
-    renderSessionsPane();
+    await switchSidebarPane('sessions');
+    await renderSessionsPane();
+    await maybeShowFirstSaveBanner();
   } catch (e) {
     showToast({ message: 'Couldn\'t save snapshot — see console.' });
     console.error('[tab-out] quick save failed', e);
