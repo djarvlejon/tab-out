@@ -1997,12 +1997,15 @@ async function openSessionKebab(sessionId, anchorEl) {
     el('button', { 'data-action': 'session-delete', 'data-session-id': sessionId, class: 'kebab-destructive' }, 'Delete')
   ]);
 
+  menu.style.position = 'fixed';
+  menu.style.top = '-9999px';
+  menu.style.left = '-9999px';
+  menu.style.visibility = 'hidden';
   document.body.appendChild(menu);
   const rect = anchorEl.getBoundingClientRect();
   const menuRect = menu.getBoundingClientRect();
-  menu.style.position = 'fixed';
   let top = rect.bottom + 4;
-  let left = Math.max(8, rect.right - 180);
+  let left = Math.max(8, rect.right - menuRect.width);
   if (top + menuRect.height > window.innerHeight) {
     top = rect.top - menuRect.height - 4;
   }
@@ -2011,6 +2014,7 @@ async function openSessionKebab(sessionId, anchorEl) {
   }
   menu.style.top = top + 'px';
   menu.style.left = Math.max(8, left) + 'px';
+  menu.style.visibility = '';
   _openKebab = menu;
 }
 
