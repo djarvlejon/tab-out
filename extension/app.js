@@ -292,6 +292,149 @@ async function dismissSavedTab(id) {
   }
 }
 
+/* ----------------------------------------------------------------
+   ULID — 26-char, lexicographically sortable by creation time
+   ---------------------------------------------------------------- */
+
+const _ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';  // Crockford's base32
+function ulid(nowMs) {
+  const now = nowMs == null ? Date.now() : nowMs;
+  let timePart = '';
+  let t = now;
+  for (let i = 9; i >= 0; i--) {
+    timePart = _ULID_ALPHABET[t % 32] + timePart;
+    t = Math.floor(t / 32);
+  }
+  const rand = crypto.getRandomValues(new Uint8Array(16));
+  let randPart = '';
+  for (let i = 0; i < 16; i++) randPart += _ULID_ALPHABET[rand[i] % 32];
+  return timePart + randPart;
+}
+
+/* ----------------------------------------------------------------
+   SESSIONS — schema + validation
+   ---------------------------------------------------------------- */
+
+const SESSION_SCHEMA_VERSION = 1;
+const TRASH_SCHEMA_VERSION = 1;
+
+const VALID_GROUP_COLORS = new Set(['grey','blue','red','yellow','green','pink','purple','cyan','orange']);
+
+function validateSession(s) {
+  if (!s || typeof s !== 'object') return false;
+  if (typeof s.id !== 'string' || !s.id) return false;
+  if (typeof s.rev !== 'number') return false;
+  if (s.kind !== 'named' && s.kind !== 'snapshot') return false;
+  if (typeof s.name !== 'string') return false;
+  if (typeof s.savedAt !== 'string' || !s.savedAt) return false;
+  if (typeof s.updatedAt !== 'string' || !s.updatedAt) return false;
+  if (!Array.isArray(s.tabs)) return false;
+
+  for (const t of s.tabs) {
+    if (!t || typeof t !== 'object') return false;
+    if (typeof t.url !== 'string') return false;
+    if (!/^https?:\/\//i.test(t.url)) return false;
+    if (typeof t.title !== 'string') return false;
+    if (typeof t.pinned !== 'boolean') return false;
+    if (typeof t.index !== 'number') return false;
+    if (t.savedGroupKey != null && typeof t.savedGroupKey !== 'string') return false;
+  }
+
+  if (s.groups && typeof s.groups === 'object') {
+    for (const key in s.groups) {
+      const g = s.groups[key];
+      if (!g || typeof g !== 'object') return false;
+      if (typeof g.title !== 'string') return false;
+      if (!VALID_GROUP_COLORS.has(g.color)) return false;
+    }
+  }
+  return true;
+}
+
+async function readSessions() {
+  const { sessions } = await chrome.storage.local.get('sessions');
+  if (!sessions || typeof sessions !== 'object') {
+    return { schemaVersion: SESSION_SCHEMA_VERSION, items: [], writeToken: null };
+  }
+  if (sessions.schemaVersion !== SESSION_SCHEMA_VERSION) {
+    console.warn('[tab-out] sessions schemaVersion mismatch — v1 is current; future migrations go here');
+  }
+
+  const items = Array.isArray(sessions.items) ? sessions.items : [];
+  const valid = [];
+  const invalid = [];
+  for (const item of items) {
+    if (validateSession(item)) valid.push(item);
+    else invalid.push(item);
+  }
+
+  if (invalid.length > 0) {
+    await quarantineSessions(invalid);
+    showToast({ message: `Skipped ${invalid.length} invalid session${invalid.length > 1 ? 's' : ''} — check Trash → Quarantine.` });
+  }
+
+  return { schemaVersion: SESSION_SCHEMA_VERSION, items: valid, writeToken: sessions.writeToken || null };
+}
+
+async function quarantineSessions(invalid) {
+  const { sessionsQuarantine = { items: [] } } = await chrome.storage.local.get('sessionsQuarantine');
+  const existing = Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
+  existing.push(...invalid.map(raw => ({ quarantinedAt: new Date().toISOString(), raw })));
+  await chrome.storage.local.set({ sessionsQuarantine: { items: existing } });
+}
+
+async function setSessionsIfUnchanged(expectedWriteToken, newItems) {
+  const { sessions } = await chrome.storage.local.get('sessions');
+  const currentToken = sessions ? sessions.writeToken : null;
+  if (currentToken !== expectedWriteToken) return false;
+  const writeToken = newWriteToken();
+  await chrome.storage.local.set({
+    sessions: { schemaVersion: SESSION_SCHEMA_VERSION, items: newItems, writeToken }
+  });
+  return true;
+}
+
+// Update an existing session atomically; retries up to 3 times on conflict.
+async function updateSession(id, mutator) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { items, writeToken } = await readSessions();
+    const idx = items.findIndex(s => s.id === id);
+    if (idx === -1) throw new Error('session-gone');
+    const next = mutator(structuredClone(items[idx]));
+    next.rev = (items[idx].rev || 0) + 1;
+    next.updatedAt = new Date().toISOString();
+    const newItems = items.slice();
+    newItems[idx] = next;
+    const ok = await setSessionsIfUnchanged(writeToken, newItems);
+    if (ok) return next;
+  }
+  showToast({ message: 'Another Tab Out tab changed this session — reload to see the latest.' });
+  throw new Error('write-conflict');
+}
+
+// Insert a new session; no conflict retry (insert is unambiguous).
+async function appendSession(session) {
+  const { items, writeToken } = await readSessions();
+  const newItems = [session, ...items];
+  const ok = await setSessionsIfUnchanged(writeToken, newItems);
+  if (!ok) {
+    const { items: items2, writeToken: wt2 } = await readSessions();
+    const ok2 = await setSessionsIfUnchanged(wt2, [session, ...items2]);
+    if (!ok2) throw new Error('write-conflict');
+  }
+}
+
+async function removeSession(id) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { items, writeToken } = await readSessions();
+    const newItems = items.filter(s => s.id !== id);
+    if (newItems.length === items.length) return;
+    const ok = await setSessionsIfUnchanged(writeToken, newItems);
+    if (ok) return;
+  }
+  throw new Error('write-conflict');
+}
+
 
 /* ----------------------------------------------------------------
    UI HELPERS
