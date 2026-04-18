@@ -435,6 +435,138 @@ async function removeSession(id) {
   throw new Error('write-conflict');
 }
 
+/* ----------------------------------------------------------------
+   SESSIONS — CRUD
+   ---------------------------------------------------------------- */
+
+const SNAPSHOT_ID = '__snap__';
+
+async function createNamedSession({ name, tabs, groups, summary }) {
+  const now = new Date().toISOString();
+  const session = {
+    id: ulid(),
+    rev: 0,
+    name,
+    kind: 'named',
+    savedAt: now,
+    updatedAt: now,
+    summary,
+    tabs,
+    groups: groups || {}
+  };
+  await appendSession(session);
+  return session;
+}
+
+async function writeSnapshotSession({ tabs, groups, summary }) {
+  const { items, writeToken } = await readSessions();
+  const existing = items.find(s => s.id === SNAPSHOT_ID);
+  if (existing) {
+    await trashAdd({ reason: 'snapshot-overwritten', session: existing });
+  }
+  const now = new Date().toISOString();
+  const snapshot = {
+    id: SNAPSHOT_ID,
+    rev: existing ? (existing.rev + 1) : 0,
+    name: 'Snapshot',
+    kind: 'snapshot',
+    savedAt: now,
+    updatedAt: now,
+    summary,
+    tabs,
+    groups: groups || {}
+  };
+  const filtered = items.filter(s => s.id !== SNAPSHOT_ID);
+  const newItems = [snapshot, ...filtered];
+  const ok = await setSessionsIfUnchanged(writeToken, newItems);
+  if (!ok) {
+    const { items: items2, writeToken: wt2 } = await readSessions();
+    const filtered2 = items2.filter(s => s.id !== SNAPSHOT_ID);
+    const ok2 = await setSessionsIfUnchanged(wt2, [snapshot, ...filtered2]);
+    if (!ok2) throw new Error('write-conflict');
+  }
+  return { snapshot, previous: existing };
+}
+
+function normalizeName(s) { return (s || '').trim().toLowerCase(); }
+
+async function isNameAvailable(name, ignoreId) {
+  const { items } = await readSessions();
+  const target = normalizeName(name);
+  return !items.some(s => s.kind === 'named' && s.id !== ignoreId && normalizeName(s.name) === target);
+}
+
+async function renameSession(id, newName) {
+  const trimmed = (newName || '').trim();
+  if (!trimmed) throw new Error('empty-name');
+  if (!(await isNameAvailable(trimmed, id))) throw new Error('name-collision');
+  const { items } = await readSessions();
+  const existing = items.find(s => s.id === id);
+  if (!existing) throw new Error('gone');
+  if (existing.name === trimmed) return existing;
+  return updateSession(id, s => {
+    s.name = trimmed;
+    return s;
+  });
+}
+
+async function duplicateSession(id) {
+  const { items } = await readSessions();
+  const src = items.find(s => s.id === id);
+  if (!src) throw new Error('gone');
+
+  const base = src.name.replace(/ \(copy(?: \d+)?\)$/, '');
+  let candidate = `${base} (copy)`;
+  let n = 2;
+  while (!(await isNameAvailable(candidate))) {
+    candidate = `${base} (copy ${n++})`;
+  }
+
+  const copy = structuredClone(src);
+  copy.id = ulid();
+  copy.rev = 0;
+  copy.name = candidate;
+  copy.kind = 'named';
+  const now = new Date().toISOString();
+  copy.savedAt = now;
+  copy.updatedAt = now;
+
+  await appendSession(copy);
+  return copy;
+}
+
+async function deleteSession(id) {
+  const { items } = await readSessions();
+  const target = items.find(s => s.id === id);
+  if (!target) return;
+  await trashAdd({ reason: 'deleted', session: target });
+  await removeSession(id);
+  return target;
+}
+
+async function saveAsNamedSession({ fromSnapshotOrId, name }) {
+  const { items } = await readSessions();
+  const src = typeof fromSnapshotOrId === 'string'
+    ? items.find(s => s.id === fromSnapshotOrId)
+    : fromSnapshotOrId;
+  if (!src) throw new Error('gone');
+  if (!(await isNameAvailable(name))) throw new Error('name-collision');
+  const now = new Date().toISOString();
+  const created = {
+    id: ulid(),
+    rev: 0,
+    name: name.trim(),
+    kind: 'named',
+    savedAt: now,
+    updatedAt: now,
+    summary: structuredClone(src.summary),
+    tabs: structuredClone(src.tabs),
+    groups: structuredClone(src.groups || {})
+  };
+  await appendSession(created);
+  return created;
+}
+
 
 /* ----------------------------------------------------------------
    UI HELPERS
