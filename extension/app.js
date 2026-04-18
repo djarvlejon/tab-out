@@ -510,7 +510,7 @@ function installStorageSync() {
 
     if (changes.sessions) {
       const nv = changes.sessions.newValue;
-      if (nv && nv.writeToken === _lastSelfWriteToken) return;
+      if (_lastSelfWriteToken && nv && nv.writeToken === _lastSelfWriteToken) return;
       renderSessionsPane();
       updateSidebarVisibility();
     }
