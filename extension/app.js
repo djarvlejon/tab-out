@@ -317,10 +317,17 @@ function ulid(nowMs) {
 
 const SESSION_SCHEMA_VERSION = 1;
 const TRASH_SCHEMA_VERSION = 1;
+const QUARANTINE_SCHEMA_VERSION = 1;
+const MAX_SESSION_NAME_LENGTH = 120;
 
 const VALID_GROUP_COLORS = new Set(['grey','blue','red','yellow','green','pink','purple','cyan','orange']);
 
 function sanitizeSessionInPlace(s) {
+  if (Array.isArray(s && s.tabs)) {
+    for (const t of s.tabs) {
+      if (t && typeof t === 'object') t.favIconUrl = '';
+    }
+  }
   if (s && s.groups && typeof s.groups === 'object') {
     for (const key in s.groups) {
       const g = s.groups[key];
@@ -336,7 +343,7 @@ function validateSession(s) {
   if (typeof s.id !== 'string' || !s.id) return false;
   if (typeof s.rev !== 'number') return false;
   if (s.kind !== 'named' && s.kind !== 'snapshot') return false;
-  if (typeof s.name !== 'string') return false;
+  if (typeof s.name !== 'string' || s.name.length > MAX_SESSION_NAME_LENGTH) return false;
   if (typeof s.savedAt !== 'string' || !s.savedAt) return false;
   if (typeof s.updatedAt !== 'string' || !s.updatedAt) return false;
   if (!Array.isArray(s.tabs)) return false;
@@ -388,9 +395,17 @@ function validateSession(s) {
 }
 
 async function readSessions() {
-  const { sessions } = await chrome.storage.local.get('sessions');
+  let { sessions } = await chrome.storage.local.get('sessions');
   if (!sessions || typeof sessions !== 'object') {
-    return { schemaVersion: SESSION_SCHEMA_VERSION, items: [], writeToken: null };
+    const created = await setSessionsIfUnchanged(null, []);
+    if (created) {
+      return { schemaVersion: SESSION_SCHEMA_VERSION, items: [], writeToken: _lastSelfWriteToken };
+    }
+    const latest = await chrome.storage.local.get('sessions');
+    sessions = latest.sessions;
+    if (!sessions || typeof sessions !== 'object') {
+      return { schemaVersion: SESSION_SCHEMA_VERSION, items: [], writeToken: null };
+    }
   }
   if (sessions.schemaVersion !== SESSION_SCHEMA_VERSION) {
     console.warn('[tab-out] sessions schemaVersion mismatch — v1 is current; future migrations go here');
@@ -451,8 +466,10 @@ function quarantineHash(raw) {
 
 async function quarantineSessions(invalid) {
   if (!Array.isArray(invalid) || invalid.length === 0) return;
-  const { sessionsQuarantine = { items: [] } } = await chrome.storage.local.get('sessionsQuarantine');
-  const existing = Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items.slice() : [];
+  const { sessionsQuarantine } = await chrome.storage.local.get('sessionsQuarantine');
+  const existing = sessionsQuarantine && Array.isArray(sessionsQuarantine.items)
+    ? sessionsQuarantine.items.slice()
+    : [];
   const seen = new Set(existing.map(item => quarantineHash(item.raw)));
   let didAdd = false;
   for (const raw of invalid) {
@@ -467,7 +484,7 @@ async function quarantineSessions(invalid) {
     didAdd = true;
   }
   if (!didAdd) return;
-  await chrome.storage.local.set({ sessionsQuarantine: { items: existing } });
+  await writeSessionsQuarantineItems(existing);
 }
 
 async function setSessionsIfUnchanged(expectedWriteToken, newItems) {
@@ -567,11 +584,13 @@ async function removeSession(id) {
 const SNAPSHOT_ID = '__snap__';
 
 async function createNamedSession({ name, tabs, groups, summary }) {
+  const safeName = clampSessionName(name);
+  if (!safeName) throw new Error('empty-name');
   const now = new Date().toISOString();
   const session = {
     id: ulid(),
     rev: 0,
-    name,
+    name: safeName,
     kind: 'named',
     savedAt: now,
     updatedAt: now,
@@ -623,6 +642,23 @@ async function writeSnapshotSession({ tabs, groups, summary }) {
 
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
 
+function clampSessionName(name) {
+  return String(name == null ? '' : name).trim().slice(0, MAX_SESSION_NAME_LENGTH);
+}
+
+function buildSuffixedSessionName(baseName, suffixLabel, takenNames) {
+  const normalizedBase = clampSessionName(baseName) || 'Session';
+  let n = 1;
+  while (true) {
+    const suffix = n === 1 ? ` (${suffixLabel})` : ` (${suffixLabel} ${n})`;
+    const headLimit = Math.max(0, MAX_SESSION_NAME_LENGTH - suffix.length);
+    const head = (normalizedBase.slice(0, headLimit) || 'Session'.slice(0, headLimit));
+    const candidate = `${head}${suffix}`.slice(0, MAX_SESSION_NAME_LENGTH);
+    if (!takenNames.has(normalizeName(candidate))) return candidate;
+    n++;
+  }
+}
+
 async function isNameAvailable(name, ignoreId) {
   const { items } = await readSessions();
   const target = normalizeName(name);
@@ -630,7 +666,7 @@ async function isNameAvailable(name, ignoreId) {
 }
 
 async function renameSession(id, newName) {
-  const trimmed = (newName || '').trim();
+  const trimmed = clampSessionName(newName);
   if (!trimmed) throw new Error('empty-name');
   return updateSession(id, async (s, allItems) => {
     const target = normalizeName(trimmed);
@@ -653,11 +689,7 @@ async function duplicateSession(id) {
 
     const base = src.name.replace(/ \(copy(?: \d+)?\)$/, '');
     const taken = new Set(items.filter(s => s.kind === 'named').map(s => normalizeName(s.name)));
-    let candidate = `${base} (copy)`;
-    let n = 2;
-    while (taken.has(normalizeName(candidate))) {
-      candidate = `${base} (copy ${n++})`;
-    }
+    const candidate = buildSuffixedSessionName(base, 'copy', taken);
 
     const copy = structuredClone(src);
     copy.id = ulid();
@@ -692,7 +724,7 @@ async function deleteSession(id) {
 }
 
 async function saveAsNamedSession({ fromSnapshotOrId, name: rawName }) {
-  const name = (rawName || '').trim();
+  const name = clampSessionName(rawName);
   if (!name) throw new Error('empty-name');
   const { items } = await readSessions();
   const src = typeof fromSnapshotOrId === 'string'
@@ -704,7 +736,7 @@ async function saveAsNamedSession({ fromSnapshotOrId, name: rawName }) {
   const created = {
     id: ulid(),
     rev: 0,
-    name: name.trim(),
+    name,
     kind: 'named',
     savedAt: now,
     updatedAt: now,
@@ -724,9 +756,17 @@ const TRASH_MAX_ITEMS = 50;
 const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 async function readTrash() {
-  const { sessionsTrash } = await chrome.storage.local.get('sessionsTrash');
+  let { sessionsTrash } = await chrome.storage.local.get('sessionsTrash');
   if (!sessionsTrash || typeof sessionsTrash !== 'object') {
-    return { schemaVersion: TRASH_SCHEMA_VERSION, items: [], writeToken: null };
+    const created = await setTrashIfUnchanged(null, []);
+    if (created) {
+      return { schemaVersion: TRASH_SCHEMA_VERSION, items: [], writeToken: _lastSelfTrashWriteToken };
+    }
+    const latest = await chrome.storage.local.get('sessionsTrash');
+    sessionsTrash = latest.sessionsTrash;
+    if (!sessionsTrash || typeof sessionsTrash !== 'object') {
+      return { schemaVersion: TRASH_SCHEMA_VERSION, items: [], writeToken: null };
+    }
   }
   const raw = Array.isArray(sessionsTrash.items) ? sessionsTrash.items : [];
   const now = Date.now();
@@ -820,14 +860,9 @@ async function trashRestore(trashId) {
 
     if (record.reason === 'deleted' && record.session) {
       const taken = new Set(sessionItems.filter(s => s.kind === 'named').map(s => normalizeName(s.name)));
-      let name = record.session.name;
+      let name = clampSessionName(record.session.name) || 'Restored session';
       if (taken.has(normalizeName(name))) {
-        let n = 1;
-        let candidate = `${name} (restored)`;
-        while (taken.has(normalizeName(candidate))) {
-          candidate = `${name} (restored ${++n})`;
-        }
-        name = candidate;
+        name = buildSuffixedSessionName(name, 'restored', taken);
       }
       const restored = structuredClone(record.session);
       restored.id = ulid();
@@ -875,15 +910,11 @@ async function trashRestore(trashId) {
         const recoveredTab = structuredClone(record.removedTab);
         recoveredTab.savedGroupKey = null;
         const tabs = [recoveredTab];
-        let recoveredName = `Recovered tab · ${timeAgo(record.trashedAt)}`;
+        let recoveredName = clampSessionName(`Recovered tab · ${timeAgo(record.trashedAt)}`) || 'Recovered tab';
         if (record.parentSessionName && record.parentSessionName.trim()) {
-          const parentSessionName = record.parentSessionName.trim();
+          const parentSessionName = clampSessionName(record.parentSessionName);
           const taken = new Set(sessionItems.filter(s => s.kind === 'named').map(s => normalizeName(s.name)));
-          recoveredName = `${parentSessionName} (recovered)`;
-          let n = 2;
-          while (taken.has(normalizeName(recoveredName))) {
-            recoveredName = `${parentSessionName} (recovered ${n++})`;
-          }
+          recoveredName = buildSuffixedSessionName(parentSessionName || 'Recovered tab', 'recovered', taken);
         }
         const now = new Date().toISOString();
         const restored = {
@@ -1216,6 +1247,15 @@ function showWriteConflictToast() {
   showToast({ message: 'Another Tab Out tab changed this session — reload to see the latest.' });
 }
 
+function isQuotaError(e) {
+  const msg = String(e && e.message ? e.message : e || '');
+  return msg.toLowerCase().includes('quota') || msg.includes('QUOTA_BYTES');
+}
+
+function showQuotaToast() {
+  showToast({ message: 'Storage full — empty the Trash or delete old sessions.' });
+}
+
 function installStorageSync() {
   if (!chrome.storage || !chrome.storage.onChanged) return;
   chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -1257,6 +1297,7 @@ function installStorageSync() {
    ---------------------------------------------------------------- */
 
 let _faviconPermissionGranted = false;
+let _faviconPromptAttempted = false;
 
 async function ensureFaviconPermission({ prompt = false } = {}) {
   const currentlyGranted = await chrome.permissions.contains({ permissions: ['favicon'] });
@@ -1292,9 +1333,26 @@ async function ensureTabGroupsPermission({ prompt = false } = {}) {
    or a letter-chip fallback element.
    ---------------------------------------------------------------- */
 
-function faviconEl(url, size = 16) {
+function maybePromptForFaviconPermission(hostname, { promptContext = '' } = {}) {
+  if (!hostname || promptContext !== 'sessions') return;
+  if (sidebarState.pane !== 'sessions') return;
+  if (_faviconPermissionGranted || _faviconPromptAttempted) return;
+  _faviconPromptAttempted = true;
+  ensureFaviconPermission({ prompt: true })
+    .then(granted => {
+      if (!granted) return;
+      return renderSessionsPane();
+    })
+    .catch(err => {
+      console.warn('[tab-out] favicon permission request failed', err);
+    });
+}
+
+function faviconEl(url, size = 16, { promptContext = '' } = {}) {
   let hostname = '';
   try { hostname = new URL(url).hostname; } catch {}
+
+  maybePromptForFaviconPermission(hostname, { promptContext });
 
   if (_faviconPermissionGranted && hostname) {
     const faviconHref = chrome.runtime.getURL('_favicon/')
@@ -1906,16 +1964,24 @@ async function initSidebarState() {
 async function switchSidebarPane(pane) {
   sidebarState.pane = pane;
   await chrome.storage.local.set({ sidebarPane: pane });
+  syncSidebarPaneState(pane);
   await renderSidebar();
   updateSidebarVisibility();
+}
+
+function syncSidebarPaneState(pane) {
+  document.querySelectorAll('#sidebarPills .pill').forEach(p => {
+    p.classList.toggle('pill-active', p.dataset.pane === pane);
+  });
+
+  const trashLink = document.getElementById('trashLink');
+  if (trashLink) trashLink.classList.toggle('trash-link-active', pane === 'trash');
 }
 
 async function renderSidebar() {
   const pane = sidebarState.pane || 'deferred';
 
-  document.querySelectorAll('#sidebarPills .pill').forEach(p => {
-    p.classList.toggle('pill-active', p.dataset.pane === pane);
-  });
+  syncSidebarPaneState(pane);
 
   const deferredPane = document.getElementById('deferredPane');
   const sessionsPane = document.getElementById('sessionsPane');
@@ -2083,7 +2149,7 @@ function renderSessionCard(session, q = '') {
     ]));
   } else {
     children.push(el('div', { class: 'session-favicon-row' },
-      (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16))
+      (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16, { promptContext: 'sessions' }))
     ));
     if (isExpanded) {
       const list = el('div', { class: 'session-tab-list' },
@@ -2122,7 +2188,7 @@ function renderSessionTabRow(sessionId, tab, tabIndex, q = '') {
     'data-session-id': sessionId,
     'data-tab-index': String(tabIndex)
   }, [
-    faviconEl(tab.url, 14),
+    faviconEl(tab.url, 14, { promptContext: 'sessions' }),
     textNode(' '),
     el('span', { class: 'session-tab-title' }, tab.title || tab.url),
     closeBtn
@@ -2415,7 +2481,8 @@ function renderTrashTabCard(record) {
 
 async function readSessionsQuarantineItems() {
   const { sessionsQuarantine } = await chrome.storage.local.get('sessionsQuarantine');
-  const rawItems = sessionsQuarantine && Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
+  if (!sessionsQuarantine || typeof sessionsQuarantine !== 'object') return [];
+  const rawItems = Array.isArray(sessionsQuarantine.items) ? sessionsQuarantine.items : [];
   const needsMigration = rawItems.some(item =>
     !item
     || typeof item !== 'object'
@@ -2424,7 +2491,7 @@ async function readSessionsQuarantineItems() {
     || !item.quarantineId
     || typeof item.quarantinedAt !== 'string'
     || !Object.prototype.hasOwnProperty.call(item, 'raw')
-  );
+  ) || sessionsQuarantine.schemaVersion !== QUARANTINE_SCHEMA_VERSION;
   if (!needsMigration) return rawItems;
 
   const items = rawItems.map(item => ({
@@ -2438,8 +2505,14 @@ async function readSessionsQuarantineItems() {
       ? item.raw
       : item
   }));
-  await chrome.storage.local.set({ sessionsQuarantine: { items } });
+  await writeSessionsQuarantineItems(items);
   return items;
+}
+
+async function writeSessionsQuarantineItems(items) {
+  await chrome.storage.local.set({
+    sessionsQuarantine: { schemaVersion: QUARANTINE_SCHEMA_VERSION, items }
+  });
 }
 
 function appendQuarantineSection(pane, items) {
@@ -2484,14 +2557,9 @@ async function quarantineRestore(quarantineId) {
     restoredId = ulid();
   }
 
-  let restoredName = (typeof raw.name === 'string' && raw.name.trim()) ? raw.name.trim() : 'Restored session';
+  let restoredName = clampSessionName(raw.name) || 'Restored session';
   if (takenNames.has(normalizeName(restoredName))) {
-    let n = 1;
-    let candidate = `${restoredName} (restored)`;
-    while (takenNames.has(normalizeName(candidate))) {
-      candidate = `${restoredName} (restored ${++n})`;
-    }
-    restoredName = candidate;
+    restoredName = buildSuffixedSessionName(restoredName, 'restored', takenNames);
   }
 
   const tabs = Array.isArray(raw.tabs)
@@ -2534,12 +2602,8 @@ async function quarantineRestore(quarantineId) {
     return null;
   }
 
-  await appendSession(coerced);
-  await chrome.storage.local.set({
-    sessionsQuarantine: {
-      items: items.filter(item => item.quarantineId !== quarantineId)
-    }
-  });
+  await appendSession(coerced, { requireNameUnique: true });
+  await writeSessionsQuarantineItems(items.filter(item => item.quarantineId !== quarantineId));
   return coerced;
 }
 
@@ -2695,7 +2759,7 @@ async function enrichCaptureWithTabGroups(capture) {
 async function showTabGroupsNoticeOnce() {
   const { _tabOutGroupNotice } = await chrome.storage.local.get('_tabOutGroupNotice');
   if (_tabOutGroupNotice) return;
-  showToast({ message: "Groups won't be saved without permission — grant it from the kebab menu anytime." });
+  showToast({ message: "Groups won't be saved without permission — you can grant it next time you save a window with grouped tabs." });
   await chrome.storage.local.set({ _tabOutGroupNotice: true });
 }
 
@@ -2778,22 +2842,40 @@ async function uniqueDefaultName(base) {
   return candidate;
 }
 
-async function openSaveOverlay({ capture, prefilledName }) {
+async function openSaveOverlay({
+  capture,
+  prefilledName,
+  allowQuickSave = true,
+  prepareCapture = true,
+  onConfirm = null,
+  title = 'Save current window as a session'
+}) {
   if (!capture || !Array.isArray(capture.tabs) || capture.tabs.length === 0) {
     showToast({ message: 'Nothing to save (unsupported URL schemes)' });
     return;
   }
   const skipped = capture && Number.isFinite(capture.skipped) ? capture.skipped : 0;
-  _activeSaveOverlay = { capture };
+  _activeSaveOverlay = {
+    capture,
+    allowQuickSave,
+    prepareCapture,
+    onConfirm,
+    title
+  };
 
   const overlay = document.getElementById('saveOverlay');
   const input = document.getElementById('saveOverlayInput');
   const errorEl = document.getElementById('saveOverlayError');
   const saveBtn = document.getElementById('saveOverlaySave');
   const summaryEl = document.getElementById('saveOverlaySummary');
+  const quickSaveBtn = overlay.querySelector('[data-action="quick-save-from-overlay"]');
+  const titleEl = overlay.querySelector('.save-overlay-title');
 
   const name = prefilledName || await uniqueDefaultName(formatDefaultSessionName());
   input.value = name;
+  if (titleEl) titleEl.textContent = _activeSaveOverlay.title;
+  if (quickSaveBtn) quickSaveBtn.style.display = _activeSaveOverlay.allowQuickSave ? '' : 'none';
+  saveBtn.textContent = 'Save';
 
   summaryEl.textContent = skipped > 0
     ? `${capture.tabs.length} tabs will be saved · ${skipped} skipped (unsupported URL schemes)`
@@ -2847,7 +2929,16 @@ async function openSaveOverlay({ capture, prefilledName }) {
 function closeSaveOverlay() {
   _activeSaveOverlay = null;
   const overlay = document.getElementById('saveOverlay');
+  const quickSaveBtn = overlay.querySelector('[data-action="quick-save-from-overlay"]');
+  const titleEl = overlay.querySelector('.save-overlay-title');
+  const saveBtn = document.getElementById('saveOverlaySave');
   overlay.onkeydown = null;
+  if (titleEl) titleEl.textContent = 'Save current window as a session';
+  if (quickSaveBtn) quickSaveBtn.style.display = '';
+  if (saveBtn) {
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = false;
+  }
   overlay.style.display = 'none';
 }
 
@@ -2858,7 +2949,7 @@ function showSaveOverlayError(errorEl, message) {
 
 async function confirmSaveOverlay() {
   if (!_activeSaveOverlay) return;
-  let { capture } = _activeSaveOverlay;
+  let { capture, onConfirm, prepareCapture } = _activeSaveOverlay;
   const input = document.getElementById('saveOverlayInput');
   const errorEl = document.getElementById('saveOverlayError');
   const saveBtn = document.getElementById('saveOverlaySave');
@@ -2867,9 +2958,15 @@ async function confirmSaveOverlay() {
   errorEl.style.display = 'none';
   saveBtn.disabled = true;
   try {
-    capture = await prepareCaptureForSave(capture);
-    _activeSaveOverlay.capture = capture;
-    await createNamedSession({ name, tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
+    if (prepareCapture) {
+      capture = await prepareCaptureForSave(capture);
+      _activeSaveOverlay.capture = capture;
+    }
+    if (typeof onConfirm === 'function') {
+      await onConfirm({ name, capture });
+    } else {
+      await createNamedSession({ name, tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
+    }
     closeSaveOverlay();
     const skipped = Number.isFinite(capture.skipped) ? capture.skipped : 0;
     const msg = skipped > 0
@@ -2887,8 +2984,8 @@ async function confirmSaveOverlay() {
       input.select();
     } else if (e.message === 'write-conflict') {
       showWriteConflictToast();
-    } else if (String(e.message).includes('QuotaExceeded') || String(e.message).includes('quota')) {
-      showToast({ message: 'Storage full — empty the Trash or delete old sessions.' });
+    } else if (isQuotaError(e)) {
+      showQuotaToast();
     } else {
       showToast({ message: 'Couldn\'t save session — see console for details.' });
       console.error('[tab-out] save failed', e);
@@ -2899,6 +2996,7 @@ async function confirmSaveOverlay() {
 
 async function quickSaveFromOverlay() {
   if (!_activeSaveOverlay) return;
+  if (_activeSaveOverlay.allowQuickSave === false) return;
   let { capture } = _activeSaveOverlay;
   try {
     capture = await prepareCaptureForSave(capture);
@@ -2927,6 +3025,8 @@ async function quickSaveFromOverlay() {
         } catch (restoreError) {
           if (restoreError.message === 'write-conflict') {
             showWriteConflictToast();
+          } else if (isQuotaError(restoreError)) {
+            showQuotaToast();
           } else {
             showToast({ message: "Couldn't restore — storage error." });
             console.error('[tab-out] quick-save undo restore failed', restoreError);
@@ -2941,6 +3041,8 @@ async function quickSaveFromOverlay() {
   } catch (e) {
     if (e.message === 'write-conflict') {
       showWriteConflictToast();
+    } else if (isQuotaError(e)) {
+      showQuotaToast();
     } else {
       showToast({ message: 'Couldn\'t save snapshot — see console.' });
       console.error('[tab-out] quick save failed', e);
@@ -3340,13 +3442,20 @@ document.addEventListener('click', async (e) => {
     if (!snap) return;
     await openSaveOverlay({
       capture: {
-        tabs: snap.tabs,
-        groups: snap.groups,
-        summary: snap.summary,
+        tabs: structuredClone(snap.tabs),
+        groups: structuredClone(snap.groups || {}),
+        summary: structuredClone(snap.summary),
         skipped: 0,
         needsTabGroupsPermission: false
       },
-      prefilledName: await uniqueDefaultName('Snapshot · ' + new Date().toLocaleString(undefined, { month: 'short', day: 'numeric' }))
+      prefilledName: await uniqueDefaultName('Snapshot · ' + new Date().toLocaleString(undefined, { month: 'short', day: 'numeric' })),
+      allowQuickSave: false,
+      prepareCapture: false,
+      onConfirm: ({ name }) => saveAsNamedSession({
+        fromSnapshotOrId: actionEl.dataset.sessionId,
+        name
+      }),
+      title: 'Save snapshot as a named session'
     });
     return;
   }
@@ -3368,6 +3477,8 @@ document.addEventListener('click', async (e) => {
     } catch (e2) {
       if (e2.message === 'write-conflict') {
         showWriteConflictToast();
+      } else if (isQuotaError(e2)) {
+        showQuotaToast();
       } else {
         showToast({ message: 'Couldn\'t duplicate — see console.' });
         console.error('[tab-out] duplicate failed', e2);
@@ -3400,6 +3511,8 @@ document.addEventListener('click', async (e) => {
           } catch (restoreError) {
             if (restoreError.message === 'write-conflict') {
               showWriteConflictToast();
+            } else if (isQuotaError(restoreError)) {
+              showQuotaToast();
             } else {
               showToast({ message: "Couldn't restore — storage error." });
               console.error('[tab-out] delete undo restore failed', restoreError);
@@ -3413,6 +3526,8 @@ document.addEventListener('click', async (e) => {
     } catch (e2) {
       if (e2.message === 'write-conflict') {
         showWriteConflictToast();
+      } else if (isQuotaError(e2)) {
+        showQuotaToast();
       } else {
         showToast({ message: 'Couldn\'t delete — see console.' });
         console.error('[tab-out] delete failed', e2);
@@ -3465,6 +3580,8 @@ document.addEventListener('click', async (e) => {
           } catch (restoreError) {
             if (restoreError.message === 'write-conflict') {
               showWriteConflictToast();
+            } else if (isQuotaError(restoreError)) {
+              showQuotaToast();
             } else {
               showToast({ message: "Couldn't restore — storage error." });
               console.error('[tab-out] remove-tab undo restore failed', restoreError);
@@ -3478,6 +3595,8 @@ document.addEventListener('click', async (e) => {
     } catch (e2) {
       if (e2.message === 'write-conflict') {
         showWriteConflictToast();
+      } else if (isQuotaError(e2)) {
+        showQuotaToast();
       } else {
         showToast({ message: 'Couldn\'t remove tab — see console.' });
         console.error('[tab-out] remove tab failed', e2);
@@ -3503,6 +3622,8 @@ document.addEventListener('click', async (e) => {
     } catch (restoreError) {
       if (restoreError.message === 'write-conflict') {
         showWriteConflictToast();
+      } else if (isQuotaError(restoreError)) {
+        showQuotaToast();
       } else {
         showToast({ message: "Couldn't restore — storage error." });
         console.error('[tab-out] trash restore failed', restoreError);
@@ -3532,11 +3653,7 @@ document.addEventListener('click', async (e) => {
     e.preventDefault();
     const quarantineId = actionEl.dataset.quarantineId;
     const items = await readSessionsQuarantineItems();
-    await chrome.storage.local.set({
-      sessionsQuarantine: {
-        items: items.filter(item => item.quarantineId !== quarantineId)
-      }
-    });
+    await writeSessionsQuarantineItems(items.filter(item => item.quarantineId !== quarantineId));
     await renderTrashPane();
     updateSidebarVisibility();
     return;
@@ -3544,10 +3661,21 @@ document.addEventListener('click', async (e) => {
 
   if (action === 'quarantine-restore') {
     e.preventDefault();
-    await quarantineRestore(actionEl.dataset.quarantineId);
-    await renderSessionsPane();
-    await renderTrashPane();
-    updateSidebarVisibility();
+    try {
+      await quarantineRestore(actionEl.dataset.quarantineId);
+      await renderSessionsPane();
+      await renderTrashPane();
+      updateSidebarVisibility();
+    } catch (restoreError) {
+      if (restoreError.message === 'write-conflict') {
+        showWriteConflictToast();
+      } else if (isQuotaError(restoreError)) {
+        showQuotaToast();
+      } else {
+        showToast({ message: "Couldn't restore — storage error." });
+        console.error('[tab-out] quarantine restore failed', restoreError);
+      }
+    }
     return;
   }
 
@@ -3561,7 +3689,7 @@ document.addEventListener('click', async (e) => {
       banner.style.opacity = '0';
       setTimeout(() => { banner.style.display = 'none'; banner.style.opacity = '1'; }, 400);
     }
-    showToast('Closed extra Tab Out tabs');
+    showToast({ message: 'Closed extra Tab Out tabs' });
     return;
   }
 
@@ -3623,7 +3751,7 @@ document.addEventListener('click', async (e) => {
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
 
-    showToast('Tab closed');
+    showToast({ message: 'Tab closed' });
     return;
   }
 
@@ -3639,7 +3767,7 @@ document.addEventListener('click', async (e) => {
       await saveTabForLater({ url: tabUrl, title: tabTitle });
     } catch (err) {
       console.error('[tab-out] Failed to save tab:', err);
-      showToast('Failed to save tab');
+      showToast({ message: 'Failed to save tab' });
       return;
     }
 
@@ -3658,7 +3786,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => chip.remove(), 200);
     }
 
-    showToast('Saved for later');
+    showToast({ message: 'Saved for later' });
     await renderSidebar();
     return;
   }
@@ -3732,7 +3860,7 @@ document.addEventListener('click', async (e) => {
     if (idx !== -1) domainGroups.splice(idx, 1);
 
     const groupLabel = group.domain === '__landing-pages__' ? 'Homepages' : (group.label || friendlyDomain(group.domain));
-    showToast(`Closed ${urls.length} tab${urls.length !== 1 ? 's' : ''} from ${groupLabel}`);
+    showToast({ message: `Closed ${urls.length} tab${urls.length !== 1 ? 's' : ''} from ${groupLabel}` });
 
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
@@ -3771,7 +3899,7 @@ document.addEventListener('click', async (e) => {
       card.classList.add('has-neutral-bar');
     }
 
-    showToast('Closed duplicates, kept one copy each');
+    showToast({ message: 'Closed duplicates, kept one copy each' });
     return;
   }
 
@@ -3791,7 +3919,7 @@ document.addEventListener('click', async (e) => {
       animateCardOut(c);
     });
 
-    showToast('All tabs closed. Fresh start.');
+    showToast({ message: 'All tabs closed. Fresh start.' });
     return;
   }
 });

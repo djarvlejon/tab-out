@@ -68,7 +68,7 @@ You open a new tab
   -> Save tabs for later before closing them
 ```
 
-Everything runs inside the Chrome extension. No external server, no API calls, no data sent anywhere. Saved tabs are stored in `chrome.storage.local`.
+Everything stays inside the Chrome extension. No external calls, no accounts, no data sent anywhere. Saved tabs live in `chrome.storage.local` on your device.
 
 ---
 
