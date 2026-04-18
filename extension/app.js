@@ -1696,8 +1696,7 @@ function updateSidebarVisibility() {
   const hasDeferred = (_lastDeferred || []).some(d => !d.dismissedAt);
   const hasSessions = (_lastSessionsCount || 0) > 0;
   const hasTrash = (_lastTrashCount || 0) > 0;
-  const userOnSessionsPane = (sidebarState.pane || 'deferred') !== 'deferred';
-  col.style.display = (hasDeferred || hasSessions || hasTrash || userOnSessionsPane) ? 'block' : 'none';
+  col.style.display = (hasDeferred || hasSessions || hasTrash) ? 'block' : 'none';
 }
 
 async function initSidebarState() {
@@ -2304,11 +2303,16 @@ async function reopenSession(sessionId) {
   const session = items.find(s => s.id === sessionId);
   if (!session) return;
 
+  if (session.tabs.length === 0) {
+    showToast({ message: 'Session is empty' });
+    return;
+  }
+
   const valid = session.tabs.filter(t => ALLOWED_SCHEMES.test(t.url));
   const dropped = session.tabs.length - valid.length;
 
   if (valid.length === 0) {
-    showToast({ message: 'Session is empty or has no valid URLs.' });
+    showToast({ message: 'Cannot reopen — all saved URLs were invalid.' });
     return;
   }
 
@@ -2636,10 +2640,12 @@ async function quickSaveFromOverlay() {
           if (!restored) {
             showToast({ message: 'That record is no longer in Trash.' });
             await renderTrashPane();
+            updateSidebarVisibility();
             return;
           }
           await renderSessionsPane();
           await renderTrashPane();
+          updateSidebarVisibility();
         } catch (restoreError) {
           showToast({ message: "Couldn't restore — storage error." });
           console.error('[tab-out] quick-save undo restore failed', restoreError);
@@ -3094,10 +3100,12 @@ document.addEventListener('click', async (e) => {
             if (!restored) {
               showToast({ message: 'That record is no longer in Trash.' });
               await renderTrashPane();
+              updateSidebarVisibility();
               return;
             }
             await renderSessionsPane();
             await renderTrashPane();
+            updateSidebarVisibility();
           } catch (restoreError) {
             showToast({ message: "Couldn't restore — storage error." });
             console.error('[tab-out] delete undo restore failed', restoreError);
@@ -3148,10 +3156,12 @@ document.addEventListener('click', async (e) => {
             if (!restored) {
               showToast({ message: 'That record is no longer in Trash.' });
               await renderTrashPane();
+              updateSidebarVisibility();
               return;
             }
             await renderSessionsPane();
             await renderTrashPane();
+            updateSidebarVisibility();
           } catch (restoreError) {
             showToast({ message: "Couldn't restore — storage error." });
             console.error('[tab-out] remove-tab undo restore failed', restoreError);
@@ -3173,11 +3183,13 @@ document.addEventListener('click', async (e) => {
       if (!restored) {
         showToast({ message: 'That record is no longer in Trash.' });
         await renderTrashPane();
+        updateSidebarVisibility();
         return;
       }
       showToast({ message: 'Restored' });
       await renderSessionsPane();
       await renderTrashPane();
+      updateSidebarVisibility();
     } catch (restoreError) {
       showToast({ message: "Couldn't restore — storage error." });
       console.error('[tab-out] trash restore failed', restoreError);
@@ -3188,7 +3200,8 @@ document.addEventListener('click', async (e) => {
   if (action === 'trash-drop') {
     e.preventDefault();
     await trashDrop(actionEl.dataset.trashId);
-    renderTrashPane();
+    await renderTrashPane();
+    updateSidebarVisibility();
     return;
   }
 
@@ -3201,15 +3214,17 @@ document.addEventListener('click', async (e) => {
         items: items.filter(item => item.quarantineId !== quarantineId)
       }
     });
-    renderTrashPane();
+    await renderTrashPane();
+    updateSidebarVisibility();
     return;
   }
 
   if (action === 'quarantine-restore') {
     e.preventDefault();
     await quarantineRestore(actionEl.dataset.quarantineId);
-    renderSessionsPane();
-    renderTrashPane();
+    await renderSessionsPane();
+    await renderTrashPane();
+    updateSidebarVisibility();
     return;
   }
 
