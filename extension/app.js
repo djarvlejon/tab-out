@@ -583,7 +583,9 @@ async function deleteSession(id) {
   return preserved;
 }
 
-async function saveAsNamedSession({ fromSnapshotOrId, name }) {
+async function saveAsNamedSession({ fromSnapshotOrId, name: rawName }) {
+  const name = (rawName || '').trim();
+  if (!name) throw new Error('empty-name');
   const { items } = await readSessions();
   const src = typeof fromSnapshotOrId === 'string'
     ? items.find(s => s.id === fromSnapshotOrId)
@@ -1694,6 +1696,65 @@ function renderTrashPane() { /* populated in Phase 6 */ }
 
 const ALLOWED_SCHEMES = /^https?:\/\//i;
 
+async function enrichCaptureWithTabGroups(capture) {
+  const sourceGroupIds = Array.isArray(capture.sourceGroupIds) ? capture.sourceGroupIds : [];
+  const groupKeyByChromeId = new Map();
+  let nextKeyIdx = 0;
+
+  for (const groupId of sourceGroupIds) {
+    if (groupId != null && groupId >= 0 && !groupKeyByChromeId.has(groupId)) {
+      groupKeyByChromeId.set(groupId, 'grp_' + (nextKeyIdx++));
+    }
+  }
+
+  const groupsMeta = {};
+  for (const [chromeGroupId, savedKey] of groupKeyByChromeId) {
+    try {
+      const g = await chrome.tabGroups.get(chromeGroupId);
+      const color = VALID_GROUP_COLORS.has(g.color) ? g.color : 'grey';
+      groupsMeta[savedKey] = { title: g.title || '', color };
+    } catch (e) {
+      console.warn('[tab-out] tabGroups.get failed', e);
+      groupKeyByChromeId.delete(chromeGroupId);
+    }
+  }
+
+  const tabs = capture.tabs.map((tab, index) => ({
+    ...tab,
+    savedGroupKey: groupKeyByChromeId.get(sourceGroupIds[index]) || null
+  }));
+
+  return {
+    ...capture,
+    tabs,
+    groups: groupsMeta,
+    summary: computeSummary(tabs),
+    needsTabGroupsPermission: false
+  };
+}
+
+async function showTabGroupsNoticeOnce() {
+  const { _tabOutGroupNotice } = await chrome.storage.local.get('_tabOutGroupNotice');
+  if (_tabOutGroupNotice) return;
+  showToast({ message: "Groups won't be saved without permission — grant it from the kebab menu anytime." });
+  await chrome.storage.local.set({ _tabOutGroupNotice: true });
+}
+
+async function prepareCaptureForSave(capture) {
+  if (!capture || !capture.needsTabGroupsPermission) return capture;
+
+  const granted = await ensureTabGroupsPermission({ prompt: true });
+  if (granted) {
+    return enrichCaptureWithTabGroups(capture);
+  }
+
+  await showTabGroupsNoticeOnce();
+  return {
+    ...capture,
+    needsTabGroupsPermission: false
+  };
+}
+
 async function captureCurrentWindow() {
   const tabs = await chrome.tabs.query({ currentWindow: true });
   const newtabUrl = chrome.runtime.getURL('index.html');
@@ -1707,52 +1768,37 @@ async function captureCurrentWindow() {
     kept.push(t);
   }
 
-  const groupKeyByChromeId = new Map();
-  let nextKeyIdx = 0;
-  for (const t of kept) {
-    if (t.groupId != null && t.groupId >= 0 && !groupKeyByChromeId.has(t.groupId)) {
-      groupKeyByChromeId.set(t.groupId, 'grp_' + (nextKeyIdx++));
-    }
-  }
-
-  let groupsMeta = {};
-  if (groupKeyByChromeId.size > 0) {
-    const granted = await ensureTabGroupsPermission({ prompt: true });
-    if (granted) {
-      for (const [chromeGroupId, savedKey] of groupKeyByChromeId) {
-        try {
-          const g = await chrome.tabGroups.get(chromeGroupId);
-          const color = VALID_GROUP_COLORS.has(g.color) ? g.color : 'grey';
-          groupsMeta[savedKey] = { title: g.title || '', color };
-        } catch (e) {
-          console.warn('[tab-out] tabGroups.get failed', e);
-        }
-      }
-    } else {
-      const { _tabOutGroupNotice } = await chrome.storage.local.get('_tabOutGroupNotice');
-      if (!_tabOutGroupNotice) {
-        showToast({ message: "Groups won't be saved without permission — grant it from the kebab menu anytime." });
-        await chrome.storage.local.set({ _tabOutGroupNotice: true });
-      }
-      groupKeyByChromeId.clear();
-    }
-  }
-
   const tabRecords = kept.map(t => ({
     url: t.url,
     title: (t.title && t.title.trim()) || (() => { try { return new URL(t.url).hostname; } catch { return 'Untitled'; } })(),
     favIconUrl: '',
     pinned: !!t.pinned,
     index: t.index,
-    savedGroupKey: groupKeyByChromeId.get(t.groupId) || null
+    savedGroupKey: null
   }));
 
-  return {
+  const capture = {
     tabs: tabRecords,
-    groups: groupsMeta,
+    groups: {},
     summary: computeSummary(tabRecords),
-    skipped
+    skipped,
+    sourceGroupIds: kept.map(t => t.groupId),
+    needsTabGroupsPermission: false
   };
+
+  if (!capture.sourceGroupIds.some(groupId => groupId != null && groupId >= 0)) {
+    return capture;
+  }
+
+  const granted = await ensureTabGroupsPermission({ prompt: false });
+  if (!granted) {
+    return {
+      ...capture,
+      needsTabGroupsPermission: true
+    };
+  }
+
+  return enrichCaptureWithTabGroups(capture);
 }
 
 let _activeSaveOverlay = null;
@@ -1774,6 +1820,11 @@ async function uniqueDefaultName(base) {
 }
 
 async function openSaveOverlay({ capture, prefilledName }) {
+  if (!capture || !Array.isArray(capture.tabs) || capture.tabs.length === 0) {
+    showToast({ message: 'Nothing to save (unsupported URL schemes)' });
+    return;
+  }
+  const skipped = capture && Number.isFinite(capture.skipped) ? capture.skipped : 0;
   _activeSaveOverlay = { capture };
 
   const overlay = document.getElementById('saveOverlay');
@@ -1785,8 +1836,8 @@ async function openSaveOverlay({ capture, prefilledName }) {
   const name = prefilledName || await uniqueDefaultName(formatDefaultSessionName());
   input.value = name;
 
-  summaryEl.textContent = capture.skipped > 0
-    ? `${capture.tabs.length} tabs will be saved · ${capture.skipped} skipped (unsupported URL schemes)`
+  summaryEl.textContent = skipped > 0
+    ? `${capture.tabs.length} tabs will be saved · ${skipped} skipped (unsupported URL schemes)`
     : `${capture.tabs.length} tabs will be saved`;
 
   errorEl.style.display = 'none';
@@ -1827,7 +1878,7 @@ function closeSaveOverlay() {
 
 async function confirmSaveOverlay() {
   if (!_activeSaveOverlay) return;
-  const { capture } = _activeSaveOverlay;
+  let { capture } = _activeSaveOverlay;
   const input = document.getElementById('saveOverlayInput');
   let name = input.value.trim();
   if (!name) name = await uniqueDefaultName(formatDefaultSessionName());
@@ -1836,10 +1887,13 @@ async function confirmSaveOverlay() {
     return;
   }
   try {
+    capture = await prepareCaptureForSave(capture);
+    _activeSaveOverlay.capture = capture;
     await createNamedSession({ name, tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
     closeSaveOverlay();
-    const msg = capture.skipped > 0
-      ? `Saved · ${capture.tabs.length} tabs (${capture.skipped} skipped)`
+    const skipped = Number.isFinite(capture.skipped) ? capture.skipped : 0;
+    const msg = skipped > 0
+      ? `Saved · ${capture.tabs.length} tabs (${skipped} skipped)`
       : `Saved · ${capture.tabs.length} tabs`;
     showToast({ message: msg });
     switchSidebarPane('sessions');
@@ -1856,12 +1910,15 @@ async function confirmSaveOverlay() {
 
 async function quickSaveFromOverlay() {
   if (!_activeSaveOverlay) return;
-  const { capture } = _activeSaveOverlay;
+  let { capture } = _activeSaveOverlay;
   try {
+    capture = await prepareCaptureForSave(capture);
+    _activeSaveOverlay.capture = capture;
     const { previous } = await writeSnapshotSession({ tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
     closeSaveOverlay();
-    const msg = capture.skipped > 0
-      ? `Snapshot saved · ${capture.tabs.length} tabs (${capture.skipped} skipped)`
+    const skipped = Number.isFinite(capture.skipped) ? capture.skipped : 0;
+    const msg = skipped > 0
+      ? `Snapshot saved · ${capture.tabs.length} tabs (${skipped} skipped)`
       : `Snapshot saved · ${capture.tabs.length} tabs`;
     showToast({
       message: msg,
@@ -2211,7 +2268,12 @@ document.addEventListener('click', async (e) => {
 
   if (action === 'open-save-overlay') {
     e.preventDefault();
-    await openSaveOverlay({ capture: await captureCurrentWindow() });
+    const capture = await captureCurrentWindow();
+    if (capture.tabs.length === 0) {
+      showToast({ message: 'Nothing to save (unsupported URL schemes)' });
+      return;
+    }
+    await openSaveOverlay({ capture });
     return;
   }
   if (action === 'cancel-save-overlay') {
