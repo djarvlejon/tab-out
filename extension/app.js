@@ -984,7 +984,7 @@ async function renderDeferredColumn() {
     // Render active checklist items
     if (active.length > 0) {
       countEl.textContent = `${active.length} item${active.length !== 1 ? 's' : ''}`;
-      list.innerHTML = active.map(item => renderDeferredItem(item)).join('');
+      list.replaceChildren(...active.map(item => renderDeferredItem(item)));
       list.style.display = 'block';
       empty.style.display = 'none';
     } else {
@@ -996,7 +996,7 @@ async function renderDeferredColumn() {
     // Render archive section
     if (archived.length > 0) {
       archiveCountEl.textContent = `(${archived.length})`;
-      archiveList.innerHTML = archived.map(item => renderArchiveItem(item)).join('');
+      archiveList.replaceChildren(...archived.map(item => renderArchiveItem(item)));
       archiveEl.style.display = 'block';
     } else {
       archiveEl.style.display = 'none';
@@ -1017,25 +1017,63 @@ async function renderDeferredColumn() {
 function renderDeferredItem(item) {
   let domain = '';
   try { domain = new URL(item.url).hostname.replace(/^www\./, ''); } catch {}
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
   const ago = timeAgo(item.savedAt);
+  const firstLetter = (domain || '?').charAt(0).toUpperCase();
 
-  return `
-    <div class="deferred-item" data-deferred-id="${item.id}">
-      <input type="checkbox" class="deferred-checkbox" data-action="check-deferred" data-deferred-id="${item.id}">
-      <div class="deferred-info">
-        <a href="${item.url}" target="_blank" rel="noopener" class="deferred-title" title="${(item.title || '').replace(/"/g, '&quot;')}">
-          <img src="${faviconUrl}" alt="" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" onerror="this.style.display='none'">${item.title || item.url}
-        </a>
-        <div class="deferred-meta">
-          <span>${domain}</span>
-          <span>${ago}</span>
-        </div>
-      </div>
-      <button class="deferred-dismiss" data-action="dismiss-deferred" data-deferred-id="${item.id}" title="Dismiss">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-      </button>
-    </div>`;
+  const checkbox = el('input', {
+    type: 'checkbox',
+    class: 'deferred-checkbox',
+    'data-action': 'check-deferred',
+    'data-deferred-id': item.id
+  });
+
+  const favicon = el('span', {
+    class: 'favicon-letter-temp',
+    style: {
+      display: 'inline-block',
+      width: '14px',
+      height: '14px',
+      lineHeight: '14px',
+      textAlign: 'center',
+      background: 'var(--warm-gray)',
+      color: 'var(--muted)',
+      borderRadius: '50%',
+      fontSize: '9px',
+      fontWeight: '500',
+      verticalAlign: '-2px'
+    }
+  }, firstLetter);
+
+  const titleLink = el('a', {
+    href: item.url,
+    target: '_blank',
+    rel: 'noopener',
+    class: 'deferred-title',
+    title: item.title || item.url
+  }, [favicon, textNode(' ' + (item.title || item.url))]);
+
+  const dismissBtn = el('button', {
+    class: 'deferred-dismiss',
+    'data-action': 'dismiss-deferred',
+    'data-deferred-id': item.id,
+    title: 'Dismiss'
+  });
+  dismissBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>';
+
+  return el('div', {
+    class: 'deferred-item',
+    'data-deferred-id': item.id
+  }, [
+    checkbox,
+    el('div', { class: 'deferred-info' }, [
+      titleLink,
+      el('div', { class: 'deferred-meta' }, [
+        el('span', {}, domain),
+        el('span', {}, ago)
+      ])
+    ]),
+    dismissBtn
+  ]);
 }
 
 /**
@@ -1045,13 +1083,16 @@ function renderDeferredItem(item) {
  */
 function renderArchiveItem(item) {
   const ago = item.completedAt ? timeAgo(item.completedAt) : timeAgo(item.savedAt);
-  return `
-    <div class="archive-item">
-      <a href="${item.url}" target="_blank" rel="noopener" class="archive-item-title" title="${(item.title || '').replace(/"/g, '&quot;')}">
-        ${item.title || item.url}
-      </a>
-      <span class="archive-item-date">${ago}</span>
-    </div>`;
+  return el('div', { class: 'archive-item' }, [
+    el('a', {
+      href: item.url,
+      target: '_blank',
+      rel: 'noopener',
+      class: 'archive-item-title',
+      title: item.title || item.url
+    }, item.title || item.url),
+    el('span', { class: 'archive-item-date' }, ago)
+  ]);
 }
 
 
@@ -1509,7 +1550,7 @@ document.addEventListener('input', async (e) => {
 
     if (q.length < 2) {
       // Show all archived items
-      archiveList.innerHTML = archived.map(item => renderArchiveItem(item)).join('');
+      archiveList.replaceChildren(...archived.map(item => renderArchiveItem(item)));
       return;
     }
 
@@ -1519,8 +1560,19 @@ document.addEventListener('input', async (e) => {
       (item.url  || '').toLowerCase().includes(q)
     );
 
-    archiveList.innerHTML = results.map(item => renderArchiveItem(item)).join('')
-      || '<div style="font-size:12px;color:var(--muted);padding:8px 0">No results</div>';
+    if (results.length > 0) {
+      archiveList.replaceChildren(...results.map(item => renderArchiveItem(item)));
+    } else {
+      archiveList.replaceChildren(
+        el('div', {
+          style: {
+            fontSize: '12px',
+            color: 'var(--muted)',
+            padding: '8px 0'
+          }
+        }, 'No results')
+      );
+    }
   } catch (err) {
     console.warn('[tab-out] Archive search failed:', err);
   }
