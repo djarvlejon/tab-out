@@ -1903,7 +1903,7 @@ async function openSessionKebab(sessionId, anchorEl) {
   if (!anchorEl.isConnected) return;
   if (!session) return;
 
-  const menu = el('div', { class: 'kebab-menu' }, [
+  const menu = el('div', { class: 'session-kebab-menu' }, [
     el('button', { 'data-action': 'session-reopen-menu', 'data-session-id': sessionId }, 'Reopen'),
     session.kind === 'named'
       ? el('button', { 'data-action': 'session-rename', 'data-session-id': sessionId }, 'Rename')
@@ -1914,9 +1914,18 @@ async function openSessionKebab(sessionId, anchorEl) {
 
   document.body.appendChild(menu);
   const rect = anchorEl.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
   menu.style.position = 'fixed';
-  menu.style.top = rect.bottom + 4 + 'px';
-  menu.style.left = Math.max(8, rect.right - 180) + 'px';
+  let top = rect.bottom + 4;
+  let left = Math.max(8, rect.right - 180);
+  if (top + menuRect.height > window.innerHeight) {
+    top = rect.top - menuRect.height - 4;
+  }
+  if (left + menuRect.width > window.innerWidth - 8) {
+    left = window.innerWidth - menuRect.width - 8;
+  }
+  menu.style.top = top + 'px';
+  menu.style.left = Math.max(8, left) + 'px';
   _openKebab = menu;
 }
 

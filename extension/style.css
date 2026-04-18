@@ -1157,7 +1157,7 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
 
 .session-favicon-row > * { margin-right: -2px; }
 
-.kebab-menu {
+.session-kebab-menu {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1167,7 +1167,7 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   z-index: 50;
 }
 
-.kebab-menu button {
+.session-kebab-menu button {
   background: transparent;
   border: none;
   color: var(--fg);
@@ -1181,9 +1181,9 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   width: 100%;
 }
 
-.kebab-menu button:hover { background: var(--hover); }
+.session-kebab-menu button:hover { background: var(--hover); }
 
-.kebab-menu button.kebab-destructive { color: var(--red, #d9534f); }
+.session-kebab-menu button.kebab-destructive { color: var(--red, #d9534f); }
 
 .session-rename-input {
   background: var(--bg);
