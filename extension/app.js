@@ -1703,9 +1703,130 @@ async function captureCurrentWindow() {
   };
 }
 
+let _activeSaveOverlay = null;
+
+function formatDefaultSessionName(now = new Date()) {
+  const base = 'Session · ' + now.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
+  return base;
+}
+
+async function uniqueDefaultName(base) {
+  let candidate = base;
+  let n = 2;
+  while (!(await isNameAvailable(candidate))) {
+    candidate = `${base} (${n++})`;
+  }
+  return candidate;
+}
+
 async function openSaveOverlay({ capture, prefilledName }) {
-  // Populated in Task 2.3
-  console.log('[tab-out] openSaveOverlay TODO', { capture, prefilledName });
+  _activeSaveOverlay = { capture };
+
+  const overlay = document.getElementById('saveOverlay');
+  const input = document.getElementById('saveOverlayInput');
+  const errorEl = document.getElementById('saveOverlayError');
+  const saveBtn = document.getElementById('saveOverlaySave');
+  const summaryEl = document.getElementById('saveOverlaySummary');
+
+  const name = prefilledName || await uniqueDefaultName(formatDefaultSessionName());
+  input.value = name;
+
+  summaryEl.textContent = capture.skipped > 0
+    ? `${capture.tabs.length} tabs will be saved · ${capture.skipped} skipped (unsupported URL schemes)`
+    : `${capture.tabs.length} tabs will be saved`;
+
+  errorEl.style.display = 'none';
+  saveBtn.disabled = false;
+  overlay.style.display = 'flex';
+  input.focus();
+  input.select();
+
+  const onInput = async () => {
+    const trimmed = input.value.trim();
+    if (!trimmed) {
+      errorEl.style.display = 'none';
+      saveBtn.disabled = false;
+      return;
+    }
+    const available = await isNameAvailable(trimmed);
+    if (!available) {
+      errorEl.textContent = `A session named "${trimmed}" already exists.`;
+      errorEl.style.display = 'block';
+      saveBtn.disabled = true;
+    } else {
+      errorEl.style.display = 'none';
+      saveBtn.disabled = false;
+    }
+  };
+  input.oninput = onInput;
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if (!saveBtn.disabled) saveBtn.click(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeSaveOverlay(); }
+  };
+}
+
+function closeSaveOverlay() {
+  _activeSaveOverlay = null;
+  document.getElementById('saveOverlay').style.display = 'none';
+}
+
+async function confirmSaveOverlay() {
+  if (!_activeSaveOverlay) return;
+  const { capture } = _activeSaveOverlay;
+  const input = document.getElementById('saveOverlayInput');
+  let name = input.value.trim();
+  if (!name) name = await uniqueDefaultName(formatDefaultSessionName());
+  if (!(await isNameAvailable(name))) {
+    showToast({ message: 'Name already taken — pick another.' });
+    return;
+  }
+  try {
+    await createNamedSession({ name, tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
+    closeSaveOverlay();
+    const msg = capture.skipped > 0
+      ? `Saved · ${capture.tabs.length} tabs (${capture.skipped} skipped)`
+      : `Saved · ${capture.tabs.length} tabs`;
+    showToast({ message: msg });
+    switchSidebarPane('sessions');
+    renderSessionsPane();
+  } catch (e) {
+    if (String(e.message).includes('QuotaExceeded') || String(e.message).includes('quota')) {
+      showToast({ message: 'Storage full — empty the Trash or delete old sessions.' });
+    } else {
+      showToast({ message: 'Couldn\'t save session — see console for details.' });
+      console.error('[tab-out] save failed', e);
+    }
+  }
+}
+
+async function quickSaveFromOverlay() {
+  if (!_activeSaveOverlay) return;
+  const { capture } = _activeSaveOverlay;
+  try {
+    const { previous } = await writeSnapshotSession({ tabs: capture.tabs, groups: capture.groups, summary: capture.summary });
+    closeSaveOverlay();
+    const msg = capture.skipped > 0
+      ? `Snapshot saved · ${capture.tabs.length} tabs (${capture.skipped} skipped)`
+      : `Snapshot saved · ${capture.tabs.length} tabs`;
+    showToast({
+      message: msg,
+      actionLabel: previous ? 'Undo' : undefined,
+      onAction: previous ? async () => {
+        const trash = await readTrash();
+        const target = trash.items.find(r => r.reason === 'snapshot-overwritten' && r.session && r.session.savedAt === previous.savedAt);
+        if (target) await trashRestore(target.trashId);
+        renderSessionsPane();
+      } : undefined
+    });
+    switchSidebarPane('sessions');
+    renderSessionsPane();
+  } catch (e) {
+    showToast({ message: 'Couldn\'t save snapshot — see console.' });
+    console.error('[tab-out] quick save failed', e);
+  }
 }
 
 /* ----------------------------------------------------------------
@@ -2039,6 +2160,21 @@ document.addEventListener('click', async (e) => {
   if (action === 'open-save-overlay') {
     e.preventDefault();
     await openSaveOverlay({ capture: await captureCurrentWindow() });
+    return;
+  }
+  if (action === 'cancel-save-overlay') {
+    e.preventDefault();
+    closeSaveOverlay();
+    return;
+  }
+  if (action === 'confirm-save-overlay') {
+    e.preventDefault();
+    await confirmSaveOverlay();
+    return;
+  }
+  if (action === 'quick-save-from-overlay') {
+    e.preventDefault();
+    await quickSaveFromOverlay();
     return;
   }
 

@@ -134,6 +134,20 @@
     </div>
   </footer>
 
+  <div class="save-overlay" id="saveOverlay" style="display:none">
+    <div class="save-overlay-inner">
+      <div class="save-overlay-title">Save current window as a session</div>
+      <div class="save-overlay-summary" id="saveOverlaySummary"></div>
+      <input type="text" class="save-overlay-input" id="saveOverlayInput" placeholder="Session name" maxlength="120">
+      <div class="save-overlay-error" id="saveOverlayError" style="display:none"></div>
+      <div class="save-overlay-actions">
+        <button class="save-overlay-cancel" data-action="cancel-save-overlay">Cancel</button>
+        <button class="save-overlay-quicksave" data-action="quick-save-from-overlay">Quick save (overwrite snapshot)</button>
+        <button class="save-overlay-save" id="saveOverlaySave" data-action="confirm-save-overlay">Save</button>
+      </div>
+    </div>
+  </div>
+
 </div><!-- end .container -->
 
 <!-- ================================================================
