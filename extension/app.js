@@ -1703,6 +1703,11 @@ async function captureCurrentWindow() {
   };
 }
 
+async function openSaveOverlay({ capture, prefilledName }) {
+  // Populated in Task 2.3
+  console.log('[tab-out] openSaveOverlay TODO', { capture, prefilledName });
+}
+
 /* ----------------------------------------------------------------
    SAVED FOR LATER — Render Checklist Pane
    ---------------------------------------------------------------- */
@@ -2030,6 +2035,12 @@ document.addEventListener('click', async (e) => {
   if (!actionEl) return;
 
   const action = actionEl.dataset.action;
+
+  if (action === 'open-save-overlay') {
+    e.preventDefault();
+    await openSaveOverlay({ capture: await captureCurrentWindow() });
+    return;
+  }
 
   // ---- Close duplicate Tab Out tabs ----
   if (action === 'close-tabout-dupes') {

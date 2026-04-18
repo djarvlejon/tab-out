@@ -21,6 +21,7 @@
   --border: var(--warm-gray);
   --fg: var(--ink);
   --bg: var(--paper);
+  --hover: rgba(26, 22, 19, 0.06);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -60,12 +61,37 @@ body::before {
 /* ---- Header ---- */
 header {
   display: flex;
+  align-items: flex-end;
   justify-content: space-between;
-  align-items: flex-start;
   margin-bottom: 48px;
   padding-bottom: 24px;
   border-bottom: 1px solid var(--warm-gray);
 }
+
+.header-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.header-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.header-chip:hover { background: var(--hover); }
+
+.header-chip-plus { font-weight: 700; opacity: 0.8; }
 
 .header-left h1 {
   font-family: 'Newsreader', serif;
