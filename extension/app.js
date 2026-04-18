@@ -525,24 +525,34 @@ function installStorageSync() {
    PERMISSIONS
    ---------------------------------------------------------------- */
 
-let _faviconPermissionChecked = false;
 let _faviconPermissionGranted = false;
 
 async function ensureFaviconPermission({ prompt = false } = {}) {
-  if (_faviconPermissionChecked) return _faviconPermissionGranted;
-  _faviconPermissionGranted = await chrome.permissions.contains({ permissions: ['favicon'] });
-  if (!_faviconPermissionGranted && prompt) {
-    _faviconPermissionGranted = await chrome.permissions.request({ permissions: ['favicon'] });
+  const currentlyGranted = await chrome.permissions.contains({ permissions: ['favicon'] });
+  if (currentlyGranted) {
+    _faviconPermissionGranted = true;
+    return true;
   }
-  _faviconPermissionChecked = true;
+
+  if (prompt) {
+    const requested = await chrome.permissions.request({ permissions: ['favicon'] });
+    _faviconPermissionGranted = !!requested;
+    return _faviconPermissionGranted;
+  }
+
+  _faviconPermissionGranted = false;
   return _faviconPermissionGranted;
 }
 
 async function ensureTabGroupsPermission({ prompt = false } = {}) {
-  const granted = await chrome.permissions.contains({ permissions: ['tabGroups'] });
-  if (granted) return true;
-  if (!prompt) return false;
-  return await chrome.permissions.request({ permissions: ['tabGroups'] });
+  const currentlyGranted = await chrome.permissions.contains({ permissions: ['tabGroups'] });
+  if (currentlyGranted) return true;
+
+  if (prompt) {
+    return !!(await chrome.permissions.request({ permissions: ['tabGroups'] }));
+  }
+
+  return false;
 }
 
 /* ----------------------------------------------------------------
