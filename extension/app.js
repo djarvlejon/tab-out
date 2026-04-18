@@ -1995,7 +1995,83 @@ async function promptRenameSession(id) {
 
 function renderTrashPane() { /* populated in Phase 6 */ }
 
-async function reopenSession() { /* populated in Phase 4 */ }
+async function reopenSession(sessionId) {
+  const { items } = await readSessions();
+  const session = items.find(s => s.id === sessionId);
+  if (!session) return;
+
+  const valid = session.tabs.filter(t => ALLOWED_SCHEMES.test(t.url));
+  const dropped = session.tabs.length - valid.length;
+
+  if (valid.length === 0) {
+    showToast({ message: 'Session is empty or has no valid URLs.' });
+    return;
+  }
+
+  if (valid.length > 75) {
+    showToast({ message: `Opening ${valid.length} tabs — this may take a moment.` });
+  }
+
+  let newWindow;
+  try {
+    newWindow = await chrome.windows.create({
+      url: valid.map(t => t.url),
+      focused: true,
+      state: 'normal'
+    });
+  } catch (err) {
+    showToast({ message: "Couldn't open session — Chrome blocked the window." });
+    console.error('[tab-out] windows.create failed', err);
+    return;
+  }
+
+  const populated = await chrome.windows.get(newWindow.id, { populate: true });
+  const createdTabs = (populated.tabs || []).slice().sort((a, b) => a.index - b.index);
+
+  let pinFailCount = 0;
+  let groupFailCount = 0;
+
+  for (let i = 0; i < valid.length && i < createdTabs.length; i++) {
+    if (valid[i].pinned) {
+      try {
+        await chrome.tabs.update(createdTabs[i].id, { pinned: true });
+      } catch (e) {
+        pinFailCount++;
+        console.warn('[tab-out] pin failed', e);
+      }
+    }
+  }
+
+  if (session.groups && Object.keys(session.groups).length > 0) {
+    const granted = await ensureTabGroupsPermission({ prompt: false });
+    if (granted) {
+      const bySavedKey = new Map();
+      for (let i = 0; i < valid.length && i < createdTabs.length; i++) {
+        const k = valid[i].savedGroupKey;
+        if (!k) continue;
+        if (!bySavedKey.has(k)) bySavedKey.set(k, []);
+        bySavedKey.get(k).push(createdTabs[i].id);
+      }
+      for (const [savedKey, tabIds] of bySavedKey) {
+        const meta = session.groups[savedKey];
+        if (!meta) continue;
+        try {
+          const gid = await chrome.tabs.group({ tabIds, createProperties: { windowId: newWindow.id } });
+          await chrome.tabGroups.update(gid, { title: meta.title, color: meta.color });
+        } catch (e) {
+          groupFailCount++;
+          console.warn('[tab-out] group restore failed', e);
+        }
+      }
+    }
+  }
+
+  const parts = [`Opened ${valid.length} tab${valid.length === 1 ? '' : 's'} in new window`];
+  if (dropped > 0) parts.push(`${dropped} skipped`);
+  if (pinFailCount > 0) parts.push(`${pinFailCount} pin${pinFailCount === 1 ? '' : 's'} failed`);
+  if (groupFailCount > 0) parts.push(`${groupFailCount} group${groupFailCount === 1 ? '' : 's'} failed`);
+  showToast({ message: parts.join(', ') });
+}
 
 /* ----------------------------------------------------------------
    SAVE FLOW — capture current window
