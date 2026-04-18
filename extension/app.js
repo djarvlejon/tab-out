@@ -1698,7 +1698,107 @@ async function renderSidebar() {
   updateSidebarVisibility();
 }
 
-function renderSessionsPane() { /* populated in Phase 3 */ }
+async function renderSessionsPane() {
+  const pane = document.getElementById('sessionsPane');
+  if (!pane) return;
+
+  const { items } = await readSessions();
+  _lastSessionsCount = items.length;
+
+  const pillCount = document.getElementById('sessionsPillCount');
+  if (pillCount) pillCount.textContent = items.length;
+
+  // Render order: snapshot first, then named by (updatedAt desc, id desc)
+  const snapshot = items.find(s => s.kind === 'snapshot');
+  const named = items.filter(s => s.kind === 'named')
+    .sort((a, b) => {
+      if (a.updatedAt !== b.updatedAt) return b.updatedAt.localeCompare(a.updatedAt);
+      return b.id.localeCompare(a.id);
+    });
+
+  pane.replaceChildren();
+
+  if (items.length === 0) {
+    pane.appendChild(el('div', { class: 'sessions-empty' },
+      'No sessions yet. Click "+ Save window" above to save your first one.'));
+    updateSidebarVisibility();
+    return;
+  }
+
+  // Search input
+  pane.appendChild(renderSessionsSearch());
+
+  // Snapshot section
+  if (snapshot) {
+    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Snapshot'));
+    pane.appendChild(renderSessionCard(snapshot));
+  }
+
+  // Named section
+  if (named.length > 0) {
+    pane.appendChild(el('div', { class: 'sessions-divider' }, 'Named'));
+    for (const s of named) pane.appendChild(renderSessionCard(s));
+  }
+
+  updateSidebarVisibility();
+}
+
+function renderSessionCard(session) {
+  const isSnapshot = session.kind === 'snapshot';
+
+  // Title line
+  const title = el('span', { class: 'session-name' }, [
+    isSnapshot ? textNode('📸 Snapshot') : textNode(session.name)
+  ]);
+
+  // Kebab
+  const kebab = el('button', {
+    class: 'session-kebab',
+    'data-action': 'session-kebab',
+    'data-session-id': session.id,
+    title: 'More'
+  }, '⋯');
+
+  // Chevron
+  const chevron = el('button', {
+    class: 'session-chevron',
+    'data-action': 'session-toggle-expand',
+    'data-session-id': session.id,
+    title: 'Expand'
+  }, '▸');
+
+  // Header row
+  const header = el('div', { class: 'session-card-header' }, [title, kebab, chevron]);
+
+  // Meta line
+  const meta = el('div', { class: 'session-meta' }, [
+    textNode(`${session.summary.tabCount} tabs · ${session.summary.uniqueDomains} site${session.summary.uniqueDomains === 1 ? '' : 's'} · `),
+    textNode(timeAgo(session.updatedAt))
+  ]);
+
+  // Favicon row
+  const faviconRow = el('div', { class: 'session-favicon-row' },
+    (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16))
+  );
+
+  const card = el('div', {
+    class: 'session-card' + (isSnapshot ? ' session-card-snapshot' : ''),
+    'data-action': 'session-reopen',
+    'data-session-id': session.id,
+    'data-session-kind': session.kind
+  }, [header, meta, faviconRow]);
+
+  return card;
+}
+
+function renderSessionsSearch() {
+  return el('input', {
+    type: 'text',
+    class: 'sessions-search',
+    id: 'sessionsSearchInput',
+    placeholder: 'Search sessions…'
+  });
+}
 function renderTrashPane() { /* populated in Phase 6 */ }
 
 /* ----------------------------------------------------------------
@@ -2254,6 +2354,7 @@ async function renderStaticDashboard() {
 
   // --- Render sidebar panes ---
   await renderSidebar();
+  await renderSessionsPane();
 }
 
 async function renderDashboard() {

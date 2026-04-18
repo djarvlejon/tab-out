@@ -1076,6 +1076,87 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   cursor: pointer;
 }
 
+.sessions-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 4px;
+  text-align: center;
+}
+
+.sessions-divider {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 16px 0 8px;
+}
+
+.sessions-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.session-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.session-card:hover { background: var(--hover); }
+
+.session-card-snapshot { background: rgba(255,255,255,0.02); }
+
+.session-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-kebab,
+.session-chevron {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.session-kebab:hover,
+.session-chevron:hover { background: var(--hover); }
+
+.session-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.session-favicon-row {
+  display: flex;
+  gap: -2px;
+  margin-top: 8px;
+}
+
+.session-favicon-row > * { margin-right: -2px; }
+
 /* On narrow screens, stack vertically */
 @media (max-width: 800px) {
   .dashboard-columns {
