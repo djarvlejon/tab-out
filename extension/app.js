@@ -718,9 +718,16 @@ async function trashRestore(trashId) {
       const recoveredTab = structuredClone(record.removedTab);
       recoveredTab.savedGroupKey = null;
       const tabs = [recoveredTab];
-      const recoveredName = record.parentSessionName && record.parentSessionName.trim()
-        ? `${record.parentSessionName.trim()} (recovered)`
-        : `Recovered tab · ${timeAgo(record.trashedAt)}`;
+      let recoveredName = `Recovered tab · ${timeAgo(record.trashedAt)}`;
+      if (record.parentSessionName && record.parentSessionName.trim()) {
+        const parentSessionName = record.parentSessionName.trim();
+        const taken = new Set(sessionItems.filter(s => s.kind === 'named').map(s => normalizeName(s.name)));
+        recoveredName = `${parentSessionName} (recovered)`;
+        let n = 2;
+        while (taken.has(normalizeName(recoveredName))) {
+          recoveredName = `${parentSessionName} (recovered ${n++})`;
+        }
+      }
       await createNamedSession({
         name: recoveredName,
         tabs,
@@ -1884,12 +1891,16 @@ function renderSessionsSearch() {
 }
 
 let _openKebab = null;
+let _kebabOpenToken = 0;
 const _expandedSessions = new Set();
 
 async function openSessionKebab(sessionId, anchorEl) {
+  const token = ++_kebabOpenToken;
   closeSessionKebab();
 
   const session = await _getSessionById(sessionId);
+  if (token !== _kebabOpenToken) return;
+  if (!anchorEl.isConnected) return;
   if (!session) return;
 
   const menu = el('div', { class: 'kebab-menu' }, [
