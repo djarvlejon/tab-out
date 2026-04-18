@@ -482,6 +482,40 @@ function textNode(str) {
 }
 
 /* ----------------------------------------------------------------
+   STORAGE CHANGE SYNC — keep multiple new-tab pages consistent
+   ---------------------------------------------------------------- */
+
+let _lastSelfWriteToken = null;
+
+function newWriteToken() {
+  const t = 'wt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  _lastSelfWriteToken = t;
+  return t;
+}
+
+function installStorageSync() {
+  if (!chrome.storage || !chrome.storage.onChanged) return;
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+
+    if (changes.sessions) {
+      const nv = changes.sessions.newValue;
+      if (nv && nv.writeToken === _lastSelfWriteToken) return;
+      renderSessionsPane();
+      updateSidebarVisibility();
+    }
+    if (changes.sessionsTrash) {
+      renderTrashPane();
+      updateSidebarVisibility();
+    }
+    if (changes.deferred) {
+      renderSidebar();
+      updateSidebarVisibility();
+    }
+  });
+}
+
+/* ----------------------------------------------------------------
    TOAST CONTROLLER
    Object API: showToast({ message, actionLabel?, onAction?, durationMs? })
    - message: required string
@@ -1098,6 +1132,9 @@ async function renderSidebar() {
 
   updateSidebarVisibility();
 }
+
+function renderSessionsPane() { /* populated in Phase 3 */ }
+function renderTrashPane() { /* populated in Phase 6 */ }
 
 /* ----------------------------------------------------------------
    SAVED FOR LATER — Render Checklist Pane
@@ -1747,6 +1784,7 @@ document.addEventListener('input', async (e) => {
    ---------------------------------------------------------------- */
 async function initApp() {
   await initSidebarState();
+  installStorageSync();
   await renderDashboard();
 }
 
