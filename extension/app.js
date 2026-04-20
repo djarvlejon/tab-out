@@ -4399,10 +4399,12 @@ function _normalizeLastAccessed(raw) {
 
 async function renderRecentlyClosedSection() {
   const container = document.getElementById('qaRecent');
+  const divider = document.getElementById('qaDivider');
   if (!container) return;
 
   const granted = await ensureSessionsPermission({ prompt: false });
   if (!granted) {
+    if (divider) divider.style.display = 'block';
     container.replaceChildren(
       el('div', { class: 'qa-section-label' }, 'Recently closed'),
       el('button', { class: 'qa-enable', 'data-action': 'qa-enable-sessions' }, 'Enable')
@@ -4423,6 +4425,7 @@ async function renderRecentlyClosedSection() {
       .map(e => e.tab);
   } catch (err) {
     console.warn('[tab-out] getRecentlyClosed failed', err);
+    if (divider) divider.style.display = 'block';
     container.replaceChildren(
       el('div', { class: 'qa-section-label' }, 'Recently closed'),
       el('div', { class: 'qa-empty' }, "Couldn't load recently closed")
@@ -4435,6 +4438,7 @@ async function renderRecentlyClosedSection() {
   }
 
   if (tabs.length === 0) {
+    if (divider) divider.style.display = 'block';
     container.replaceChildren(
       el('div', { class: 'qa-section-label' }, 'Recently closed'),
       el('div', { class: 'qa-empty' }, 'Nothing recently closed')
@@ -4442,34 +4446,30 @@ async function renderRecentlyClosedSection() {
     return;
   }
 
+  if (divider) divider.style.display = 'block';
   container.replaceChildren(
     el('div', { class: 'qa-section-label' }, 'Recently closed'),
-    el('div', { class: 'qa-recent-list' }, tabs.map(renderRecentItem))
+    el('div', { class: 'qa-recent-strip' }, tabs.map(renderRecentChip))
   );
 }
 
-function renderRecentItem(tab) {
+function renderRecentChip(tab) {
   let hostname = '';
   try { hostname = new URL(tab.url).hostname.replace(/^www\./, ''); } catch {}
   const hasTitle = tab.title && tab.title.trim();
-  const titleNode = hasTitle
-    ? textNode(tab.title.trim())
-    : el('em', { class: 'qa-recent-title-untitled' }, '(no title)');
+  const titleText = hasTitle ? tab.title.trim() : '(no title)';
   const lastAccessedMs = _normalizeLastAccessed(tab.lastAccessed);
   const lastAccessedIso = new Date(lastAccessedMs).toISOString();
   const ago = timeAgo(lastAccessedIso);
 
   return el('button', {
-    class: 'qa-recent-item',
+    class: 'qa-recent-chip',
     'data-action': 'qa-restore-closed',
     'data-session-id': String(tab.sessionId || ''),
-    title: hostname
+    title: hostname + ' · ' + ago
   }, [
-    faviconEl(tab.url, 16),
-    el('div', { class: 'qa-recent-text' }, [
-      el('div', { class: 'qa-recent-title' }, titleNode),
-      el('div', { class: 'qa-recent-meta' }, hostname + ' · ' + ago)
-    ])
+    faviconEl(tab.url, 14),
+    el('span', { class: 'qa-recent-chip-title' }, titleText)
   ]);
 }
 
