@@ -3937,6 +3937,43 @@ document.addEventListener('click', async (e) => {
     showToast({ message: 'All tabs closed. Fresh start.' });
     return;
   }
+
+  if (action === 'qa-toggle-edit') {
+    e.preventDefault();
+    _workspaceEditMode = !_workspaceEditMode;
+    if (!_workspaceEditMode) _addInputOpen = false;
+    renderWorkspaceSection();
+    return;
+  }
+  if (action === 'qa-remove-link') {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = actionEl.dataset.linkId;
+    try {
+      await removeWorkspaceLink(id);
+    } catch (err) {
+      if (String(err).toLowerCase().includes('quota')) {
+        showToast({ message: 'Storage full — delete a link first.' });
+      } else {
+        showToast({ message: "Couldn't remove — try reloading." });
+        console.warn('[tab-out] removeWorkspaceLink failed', err);
+      }
+    }
+    renderWorkspaceSection();
+    return;
+  }
+  if (action === 'qa-add-link-start') {
+    e.preventDefault();
+    _addInputOpen = true;
+    renderWorkspaceSection();
+    return;
+  }
+  if (action === 'qa-enable-sessions') {
+    e.preventDefault();
+    await ensureSessionsPermission({ prompt: true });
+    renderRecentlyClosedSection();
+    return;
+  }
 });
 
 // Close on outside click
@@ -4026,6 +4063,7 @@ let _workspaceEditMode = false;
 let _sessionsPermissionGranted = false;
 let _lastSelfWorkspaceWriteToken = null;
 let _recentRefreshTimer = null;
+let _addInputOpen = false;
 
 function newWorkspaceWriteToken() {
   const t = 'wtw_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -4112,7 +4150,9 @@ async function renderWorkspaceSection() {
   const { items } = await readWorkspaceLinks();
 
   const chips = items.map(renderWorkspaceChip);
-  if (_workspaceEditMode) chips.push(renderAddChip(items.length));
+  if (_workspaceEditMode) {
+    chips.push(_addInputOpen ? renderAddLinkInput(items.length) : renderAddChip(items.length));
+  }
 
   const toggle = el('button', {
     class: 'qa-edit-toggle',
@@ -4152,6 +4192,57 @@ function renderWorkspaceChip(item) {
   }
 
   return chip;
+}
+
+function renderAddLinkInput(currentCount) {
+  const input = el('input', {
+    type: 'url',
+    class: 'qa-add-input',
+    placeholder: 'https://example.com'
+  });
+  const errorEl = el('span', { class: 'qa-add-error', style: { display: 'none' } });
+
+  const wrapper = el('span', { class: 'qa-add-wrapper' }, [input, errorEl]);
+
+  function commit() {
+    const url = input.value.trim();
+    if (!url) { exit(); return; }
+    errorEl.style.display = 'none';
+    addWorkspaceLink(url)
+      .then(() => {
+        _workspaceEditMode = true;
+        renderWorkspaceSection();
+      })
+      .catch(err => {
+        const msg = err && err.message;
+        let text = "Couldn't add link.";
+        if (msg === 'invalid-scheme') text = 'Use http:// or https://';
+        else if (msg === 'duplicate-url') text = 'Already in the list';
+        else if (msg === 'cap-reached') text = 'Remove a link first';
+        else if (String(err).toLowerCase().includes('quota')) text = 'Storage full — delete a link first.';
+        errorEl.textContent = text;
+        errorEl.style.display = 'inline';
+        input.focus();
+        input.select();
+      });
+  }
+
+  function exit() {
+    _addInputOpen = false;
+    renderWorkspaceSection();
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); exit(); }
+  });
+  input.addEventListener('blur', () => {
+    if (!input.value.trim() && errorEl.style.display !== 'inline') exit();
+  });
+
+  setTimeout(() => { input.focus(); }, 0);
+
+  return wrapper;
 }
 
 function renderAddChip(currentCount) {
