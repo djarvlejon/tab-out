@@ -4101,11 +4101,75 @@ function deriveLabelFromUrl(url) {
 }
 
 async function renderQuickAccessRow() {
-  // Stubbed — Tasks 4 and 5 replace this with real implementations.
-  const ws = document.getElementById('qaWorkspace');
-  const rc = document.getElementById('qaRecent');
-  if (ws) ws.replaceChildren();
-  if (rc) rc.replaceChildren();
+  await renderWorkspaceSection();
+  await renderRecentlyClosedSection();
+}
+
+async function renderWorkspaceSection() {
+  const container = document.getElementById('qaWorkspace');
+  if (!container) return;
+
+  const { items } = await readWorkspaceLinks();
+
+  const chips = items.map(renderWorkspaceChip);
+  if (_workspaceEditMode) chips.push(renderAddChip(items.length));
+
+  const toggle = el('button', {
+    class: 'qa-edit-toggle',
+    'data-action': 'qa-toggle-edit',
+    title: _workspaceEditMode ? 'Done' : 'Edit'
+  }, _workspaceEditMode ? '✓' : '✎');
+
+  container.replaceChildren(
+    el('div', { class: 'qa-section-label' }, 'Workspace'),
+    el('div', { class: 'qa-chip-strip' }, chips),
+    toggle
+  );
+}
+
+function renderWorkspaceChip(item) {
+  const chip = el('a', {
+    class: 'qa-chip' + (_workspaceEditMode ? ' qa-edit-mode' : ''),
+    href: item.url,
+    target: '_blank',
+    rel: 'noopener',
+    title: item.label,
+    'data-link-id': item.id
+  }, [faviconEl(item.url, 24)]);
+
+  if (_workspaceEditMode) {
+    const removeBtn = el('button', {
+      class: 'qa-chip-remove',
+      'data-action': 'qa-remove-link',
+      'data-link-id': item.id,
+      title: 'Remove ' + item.label
+    }, '×');
+    removeBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    }, { once: false });
+    chip.appendChild(removeBtn);
+  }
+
+  return chip;
+}
+
+function renderAddChip(currentCount) {
+  const btn = el('button', {
+    class: 'qa-add',
+    'data-action': 'qa-add-link-start',
+    disabled: currentCount >= WORKSPACE_MAX_ITEMS,
+    title: currentCount >= WORKSPACE_MAX_ITEMS ? 'Remove a link first' : 'Add link'
+  }, '+');
+  return btn;
+}
+
+// Recently-closed gets its real implementation in Task 5;
+// for now a permanent no-op so Task 4 can stand alone.
+async function renderRecentlyClosedSection() {
+  const container = document.getElementById('qaRecent');
+  if (!container) return;
+  container.replaceChildren();
 }
 
 
