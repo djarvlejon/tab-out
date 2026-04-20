@@ -3991,13 +3991,99 @@ document.addEventListener('input', async (e) => {
 
 /* ----------------------------------------------------------------
    QUICK ACCESS ROW — workspace + recently closed
-   Full implementation filled in across Tasks 2-8.
    ---------------------------------------------------------------- */
+
+const WORKSPACE_LINKS_KEY = 'workspaceLinks';
+const WORKSPACE_SCHEMA_VERSION = 1;
+const WORKSPACE_MAX_ITEMS = 16;
+
+const WORKSPACE_DEFAULTS = [
+  { url: 'https://mail.google.com/',     label: 'Gmail' },
+  { url: 'https://calendar.google.com/', label: 'Calendar' },
+  { url: 'https://drive.google.com/',    label: 'Drive' },
+  { url: 'https://docs.google.com/',     label: 'Docs' },
+  { url: 'https://sheets.google.com/',   label: 'Sheets' },
+  { url: 'https://slides.google.com/',   label: 'Slides' },
+  { url: 'https://gemini.google.com/',   label: 'Gemini' }
+];
 
 let _workspaceEditMode = false;
 let _sessionsPermissionGranted = false;
 let _lastSelfWorkspaceWriteToken = null;
 let _recentRefreshTimer = null;
+
+function newWorkspaceWriteToken() {
+  const t = 'wtw_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  _lastSelfWorkspaceWriteToken = t;
+  return t;
+}
+
+async function readWorkspaceLinks() {
+  const { workspaceLinks } = await chrome.storage.local.get(WORKSPACE_LINKS_KEY);
+  if (workspaceLinks
+      && workspaceLinks.schemaVersion === WORKSPACE_SCHEMA_VERSION
+      && Array.isArray(workspaceLinks.items)) {
+    return workspaceLinks;
+  }
+  const items = WORKSPACE_DEFAULTS.map(d => ({
+    id: 'ws_' + ulid(),
+    url: d.url,
+    label: d.label
+  }));
+  const writeToken = newWorkspaceWriteToken();
+  const seeded = { schemaVersion: WORKSPACE_SCHEMA_VERSION, items, writeToken };
+  await chrome.storage.local.set({ [WORKSPACE_LINKS_KEY]: seeded });
+  return seeded;
+}
+
+async function writeWorkspaceLinks(items) {
+  const writeToken = newWorkspaceWriteToken();
+  await chrome.storage.local.set({
+    [WORKSPACE_LINKS_KEY]: {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      items,
+      writeToken
+    }
+  });
+}
+
+function normalizeWorkspaceUrl(url) {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
+
+async function addWorkspaceLink(rawUrl, rawLabel) {
+  const url = String(rawUrl || '').trim();
+  if (!ALLOWED_SCHEMES.test(url)) throw new Error('invalid-scheme');
+
+  const { items } = await readWorkspaceLinks();
+  if (items.length >= WORKSPACE_MAX_ITEMS) throw new Error('cap-reached');
+
+  const normalized = normalizeWorkspaceUrl(url).toLowerCase();
+  if (items.some(i => normalizeWorkspaceUrl(i.url).toLowerCase() === normalized)) {
+    throw new Error('duplicate-url');
+  }
+
+  const label = (rawLabel && String(rawLabel).trim()) || deriveLabelFromUrl(url);
+  const trimmedLabel = label.slice(0, 48);
+  const next = { id: 'ws_' + ulid(), url, label: trimmedLabel };
+  await writeWorkspaceLinks([...items, next]);
+  return next;
+}
+
+async function removeWorkspaceLink(id) {
+  const { items } = await readWorkspaceLinks();
+  await writeWorkspaceLinks(items.filter(i => i.id !== id));
+}
+
+function deriveLabelFromUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    if (!host) return 'Link';
+    return (host.charAt(0).toUpperCase() + host.slice(1)).slice(0, 48);
+  } catch {
+    return 'Link';
+  }
+}
 
 async function renderQuickAccessRow() {
   // Stubbed — Tasks 4 and 5 replace this with real implementations.
