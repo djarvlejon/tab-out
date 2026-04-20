@@ -3979,6 +3979,18 @@ document.addEventListener('click', async (e) => {
     renderRecentlyClosedSection();
     return;
   }
+  if (action === 'qa-restore-closed') {
+    e.preventDefault();
+    const sessionId = actionEl.dataset.sessionId;
+    if (!sessionId) return;
+    try {
+      await chrome.sessions.restore(sessionId);
+    } catch (err) {
+      showToast({ message: "Couldn't reopen tab — it may be too old." });
+      console.warn('[tab-out] sessions.restore failed', err);
+    }
+    return;
+  }
 });
 
 // Close on outside click
