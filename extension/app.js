@@ -4203,7 +4203,6 @@ function renderWorkspaceChip(item) {
     }, '×');
     removeBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      e.stopPropagation();
     }, { once: false });
     chip.appendChild(removeBtn);
   }
