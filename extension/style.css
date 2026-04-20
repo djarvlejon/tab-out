@@ -255,17 +255,17 @@ header {
 .mission-card {
   background: var(--card-bg);
   border: 1px solid var(--warm-gray);
-  border-radius: 8px;
-  padding: 16px 18px;
+  border-radius: 10px;
+  padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  transition: box-shadow 0.25s ease, transform 0.25s ease;
+  gap: 6px;
+  transition: box-shadow 0.25s ease, transform 0.25s ease, border-color 0.25s ease;
   cursor: pointer;
   position: relative;
   overflow: hidden;
-  break-inside: avoid;       /* don't split a card across columns */
-  margin-bottom: 12px;       /* vertical spacing (replaces grid gap) */
+  break-inside: avoid;
+  margin-bottom: 12px;
 }
 
 /* Colored top border instead of side bar for grid cards */
@@ -284,7 +284,7 @@ header {
 .mission-card.has-neutral-bar::before { background: var(--warm-gray); }
 
 .mission-card:hover {
-  box-shadow: 0 4px 20px var(--shadow);
+  box-shadow: 0 2px 12px var(--shadow);
   transform: translateY(-1px);
 }
 
@@ -389,7 +389,7 @@ header {
   font-size: 13px;
   color: var(--ink);
   background: transparent;
-  padding: 8px 4px;
+  padding: 6px 4px;
   border-radius: 0;
   border: none;
   border-bottom: 1px solid rgba(154, 145, 138, 0.1);
@@ -563,14 +563,21 @@ header {
 }
 
 .action-btn.close-tabs {
-  border-color: rgba(200, 113, 58, 0.3);
-  color: var(--accent-amber);
-  background: rgba(200, 113, 58, 0.04);
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--border);
+  opacity: 0.7;
+  transition: opacity 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.mission-card:hover .action-btn.close-tabs {
+  opacity: 1;
 }
 
 .action-btn.close-tabs:hover {
-  background: rgba(200, 113, 58, 0.1);
-  border-color: var(--accent-amber);
+  color: var(--red, #d9534f);
+  border-color: var(--red, #d9534f);
+  background: transparent;
 }
 
 .action-btn.save-tabs {

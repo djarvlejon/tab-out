@@ -1632,17 +1632,16 @@ function friendlyDomain(hostname) {
   if (FRIENDLY_DOMAINS[hostname]) return FRIENDLY_DOMAINS[hostname];
 
   if (hostname.endsWith('.substack.com') && hostname !== 'substack.com') {
-    return capitalize(hostname.replace('.substack.com', '')) + "'s Substack";
+    return hostname.replace('.substack.com', '').toLowerCase() + "'s Substack";
   }
   if (hostname.endsWith('.github.io')) {
-    return capitalize(hostname.replace('.github.io', '')) + ' (GitHub Pages)';
+    return hostname.replace('.github.io', '').toLowerCase() + ' (GitHub Pages)';
   }
 
-  let clean = hostname
+  return hostname
     .replace(/^www\./, '')
-    .replace(/\.(com|org|net|io|co|ai|dev|app|so|me|xyz|info|us|uk|co\.uk|co\.jp)$/, '');
-
-  return clean.split('.').map(part => capitalize(part)).join(' ');
+    .replace(/\.(com|org|net|io|co|ai|dev|app|so|me|xyz|info|us|uk|co\.uk|co\.jp)$/, '')
+    .toLowerCase();
 }
 
 function capitalize(str) {
@@ -1881,13 +1880,6 @@ function renderDomainCard(group) {
   const hasDupes   = dupeUrls.length > 0;
   const totalExtras = dupeUrls.reduce((s, [, c]) => s + c - 1, 0);
 
-  const tabsIcon = el('span');
-  tabsIcon.innerHTML = ICONS.tabs;
-  const tabBadge = el('span', { class: 'open-tabs-badge' }, [
-    tabsIcon,
-    textNode(` ${tabCount} tab${tabCount !== 1 ? 's' : ''} open`)
-  ]);
-
   const dupeBadge = hasDupes
     ? el('span', {
       class: 'open-tabs-badge',
@@ -1951,7 +1943,6 @@ function renderDomainCard(group) {
     el('div', { class: 'mission-content' }, [
       el('div', { class: 'mission-top' }, [
         el('span', { class: 'mission-name' }, isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))),
-        tabBadge,
         dupeBadge
       ]),
       el('div', { class: 'mission-pages' }, pageChips),
