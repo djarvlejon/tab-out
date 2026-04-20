@@ -3990,11 +3990,31 @@ document.addEventListener('input', async (e) => {
 
 
 /* ----------------------------------------------------------------
+   QUICK ACCESS ROW — workspace + recently closed
+   Full implementation filled in across Tasks 2-8.
+   ---------------------------------------------------------------- */
+
+let _workspaceEditMode = false;
+let _sessionsPermissionGranted = false;
+let _lastSelfWorkspaceWriteToken = null;
+let _recentRefreshTimer = null;
+
+async function renderQuickAccessRow() {
+  // Stubbed — Tasks 4 and 5 replace this with real implementations.
+  const ws = document.getElementById('qaWorkspace');
+  const rc = document.getElementById('qaRecent');
+  if (ws) ws.replaceChildren();
+  if (rc) rc.replaceChildren();
+}
+
+
+/* ----------------------------------------------------------------
    INITIALIZE
    ---------------------------------------------------------------- */
 async function initApp() {
   await initSidebarState();
   installStorageSync();
+  await renderQuickAccessRow();
   await ensureFaviconPermission();
   await renderDashboard();
 }
