@@ -4164,12 +4164,71 @@ function renderAddChip(currentCount) {
   return btn;
 }
 
-// Recently-closed gets its real implementation in Task 5;
-// for now a permanent no-op so Task 4 can stand alone.
+function _normalizeLastAccessed(raw) {
+  if (!raw || typeof raw !== 'number') return Date.now();
+  return raw < 1e12 ? raw * 1000 : raw;
+}
+
 async function renderRecentlyClosedSection() {
   const container = document.getElementById('qaRecent');
   if (!container) return;
-  container.replaceChildren();
+
+  const granted = await ensureSessionsPermission({ prompt: false });
+  if (!granted) {
+    container.replaceChildren(
+      el('div', { class: 'qa-section-label' }, 'Recently closed'),
+      el('button', { class: 'qa-enable', 'data-action': 'qa-enable-sessions' }, 'Enable')
+    );
+    return;
+  }
+
+  let tabs = [];
+  try {
+    const entries = await chrome.sessions.getRecentlyClosed({ maxResults: 25 });
+    tabs = entries.filter(e => e.tab).slice(0, 5).map(e => e.tab);
+  } catch (err) {
+    console.warn('[tab-out] getRecentlyClosed failed', err);
+    container.replaceChildren(
+      el('div', { class: 'qa-section-label' }, 'Recently closed'),
+      el('div', { class: 'qa-empty' }, "Couldn't load recently closed")
+    );
+    return;
+  }
+
+  if (tabs.length === 0) {
+    container.replaceChildren(
+      el('div', { class: 'qa-section-label' }, 'Recently closed'),
+      el('div', { class: 'qa-empty' }, 'Nothing recently closed')
+    );
+    return;
+  }
+
+  container.replaceChildren(
+    el('div', { class: 'qa-section-label' }, 'Recently closed'),
+    el('div', { class: 'qa-recent-list' }, tabs.map(renderRecentItem))
+  );
+}
+
+function renderRecentItem(tab) {
+  let hostname = '';
+  try { hostname = new URL(tab.url).hostname.replace(/^www\./, ''); } catch {}
+  const title = (tab.title && tab.title.trim()) || hostname || 'Untitled';
+  const lastAccessedMs = _normalizeLastAccessed(tab.lastAccessed);
+  const lastAccessedIso = new Date(lastAccessedMs).toISOString();
+  const ago = timeAgo(lastAccessedIso);
+
+  return el('button', {
+    class: 'qa-recent-item',
+    'data-action': 'qa-restore-closed',
+    'data-session-id': String(tab.sessionId || ''),
+    title: tab.url
+  }, [
+    faviconEl(tab.url, 16),
+    el('div', { class: 'qa-recent-text' }, [
+      el('div', { class: 'qa-recent-title' }, title),
+      el('div', { class: 'qa-recent-meta' }, hostname + ' · ' + ago)
+    ])
+  ]);
 }
 
 
