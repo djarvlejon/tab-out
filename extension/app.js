@@ -3957,7 +3957,10 @@ document.addEventListener('click', async (e) => {
     try {
       await removeWorkspaceLink(id);
     } catch (err) {
-      if (String(err).toLowerCase().includes('quota')) {
+      const msg = err && err.message;
+      if (msg === 'write-conflict') {
+        showToast({ message: 'Another Tab Out tab changed Workspace — reload to see the latest.' });
+      } else if (String(err).toLowerCase().includes('quota')) {
         showToast({ message: 'Storage full — delete a link first.' });
       } else {
         showToast({ message: "Couldn't remove — try reloading." });
@@ -4088,25 +4091,31 @@ function newWorkspaceWriteToken() {
   return t;
 }
 
-async function readWorkspaceLinks() {
-  const { workspaceLinks } = await chrome.storage.local.get(WORKSPACE_LINKS_KEY);
-  if (workspaceLinks
-      && workspaceLinks.schemaVersion === WORKSPACE_SCHEMA_VERSION
-      && Array.isArray(workspaceLinks.items)) {
-    return workspaceLinks;
+function _validateWorkspaceItems(items) {
+  const valid = [];
+  let droppedCount = 0;
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) { droppedCount++; continue; }
+    if (typeof item.id !== 'string' || !item.id.startsWith('ws_')) { droppedCount++; continue; }
+    if (typeof item.url !== 'string' || !ALLOWED_SCHEMES.test(item.url)) { droppedCount++; continue; }
+    if (typeof item.label !== 'string' || item.label.length < 1 || item.label.length > 48) { droppedCount++; continue; }
+    if (valid.length >= WORKSPACE_MAX_ITEMS) { droppedCount++; continue; }
+    valid.push(item);
   }
-  const items = WORKSPACE_DEFAULTS.map(d => ({
-    id: 'ws_' + ulid(),
-    url: d.url,
-    label: d.label
-  }));
-  const writeToken = newWorkspaceWriteToken();
-  const seeded = { schemaVersion: WORKSPACE_SCHEMA_VERSION, items, writeToken };
-  await chrome.storage.local.set({ [WORKSPACE_LINKS_KEY]: seeded });
-  return seeded;
+  return { valid, droppedCount };
 }
 
-async function writeWorkspaceLinks(items) {
+function _notifyDroppedWorkspaceItems(count) {
+  if (count <= 0) return;
+  if (typeof showToast === 'function') {
+    showToast({ message: 'Skipped ' + count + ' invalid workspace item' + (count === 1 ? '' : 's') + '.' });
+  }
+}
+
+async function writeWorkspaceLinksIfUnchanged(expectedWriteToken, items) {
+  const { workspaceLinks } = await chrome.storage.local.get(WORKSPACE_LINKS_KEY);
+  const currentToken = workspaceLinks ? (workspaceLinks.writeToken || null) : null;
+  if (currentToken !== expectedWriteToken) return false;
   const writeToken = newWorkspaceWriteToken();
   await chrome.storage.local.set({
     [WORKSPACE_LINKS_KEY]: {
@@ -4115,6 +4124,34 @@ async function writeWorkspaceLinks(items) {
       writeToken
     }
   });
+  return true;
+}
+
+async function readWorkspaceLinks() {
+  const { workspaceLinks } = await chrome.storage.local.get(WORKSPACE_LINKS_KEY);
+
+  if (workspaceLinks
+      && workspaceLinks.schemaVersion === WORKSPACE_SCHEMA_VERSION
+      && Array.isArray(workspaceLinks.items)) {
+    const { valid, droppedCount } = _validateWorkspaceItems(workspaceLinks.items);
+    _notifyDroppedWorkspaceItems(droppedCount);
+    return { ...workspaceLinks, items: valid };
+  }
+
+  // Absent or corrupt — CAS-seed defaults so a concurrent seed on another page doesn't clobber newer state.
+  const expectedToken = workspaceLinks ? (workspaceLinks.writeToken || null) : null;
+  const seededItems = WORKSPACE_DEFAULTS.map(d => ({
+    id: 'ws_' + ulid(),
+    url: d.url,
+    label: d.label
+  }));
+  const ok = await writeWorkspaceLinksIfUnchanged(expectedToken, seededItems);
+  if (ok) {
+    const after = await chrome.storage.local.get(WORKSPACE_LINKS_KEY);
+    return after.workspaceLinks;
+  }
+  // Another page seeded/wrote first — re-read their state.
+  return readWorkspaceLinks();
 }
 
 function normalizeWorkspaceUrl(url) {
@@ -4122,27 +4159,40 @@ function normalizeWorkspaceUrl(url) {
 }
 
 async function addWorkspaceLink(rawUrl, rawLabel) {
-  const url = String(rawUrl || '').trim();
-  if (!ALLOWED_SCHEMES.test(url)) throw new Error('invalid-scheme');
+  const raw = String(rawUrl || '').trim();
+  if (!ALLOWED_SCHEMES.test(raw)) throw new Error('invalid-scheme');
+  const normalized = normalizeWorkspaceUrl(raw);
+  if (!ALLOWED_SCHEMES.test(normalized)) throw new Error('invalid-scheme');
 
-  const { items } = await readWorkspaceLinks();
-  if (items.length >= WORKSPACE_MAX_ITEMS) throw new Error('cap-reached');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await readWorkspaceLinks();
+    const items = current.items;
+    const writeToken = current.writeToken || null;
+    if (items.length >= WORKSPACE_MAX_ITEMS) throw new Error('cap-reached');
 
-  const normalized = normalizeWorkspaceUrl(url).toLowerCase();
-  if (items.some(i => normalizeWorkspaceUrl(i.url).toLowerCase() === normalized)) {
-    throw new Error('duplicate-url');
+    const dupKey = normalized.toLowerCase();
+    if (items.some(i => normalizeWorkspaceUrl(i.url).toLowerCase() === dupKey)) {
+      throw new Error('duplicate-url');
+    }
+
+    const label = (rawLabel && String(rawLabel).trim()) || deriveLabelFromUrl(raw);
+    const trimmedLabel = label.slice(0, 48);
+    const next = { id: 'ws_' + ulid(), url: normalized, label: trimmedLabel };
+    const ok = await writeWorkspaceLinksIfUnchanged(writeToken, [...items, next]);
+    if (ok) return next;
   }
-
-  const label = (rawLabel && String(rawLabel).trim()) || deriveLabelFromUrl(url);
-  const trimmedLabel = label.slice(0, 48);
-  const next = { id: 'ws_' + ulid(), url, label: trimmedLabel };
-  await writeWorkspaceLinks([...items, next]);
-  return next;
+  throw new Error('write-conflict');
 }
 
 async function removeWorkspaceLink(id) {
-  const { items } = await readWorkspaceLinks();
-  await writeWorkspaceLinks(items.filter(i => i.id !== id));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await readWorkspaceLinks();
+    const items = current.items;
+    const writeToken = current.writeToken || null;
+    const ok = await writeWorkspaceLinksIfUnchanged(writeToken, items.filter(i => i.id !== id));
+    if (ok) return;
+  }
+  throw new Error('write-conflict');
 }
 
 function deriveLabelFromUrl(url) {
@@ -4235,6 +4285,7 @@ function renderAddLinkInput(currentCount) {
         if (msg === 'invalid-scheme') text = 'Use http:// or https://';
         else if (msg === 'duplicate-url') text = 'Already in the list';
         else if (msg === 'cap-reached') text = 'Remove a link first';
+        else if (msg === 'write-conflict') text = 'Another Tab Out tab changed Workspace — reload to see the latest.';
         else if (String(err).toLowerCase().includes('quota')) text = 'Storage full — delete a link first.';
         errorEl.textContent = text;
         errorEl.style.display = 'inline';
