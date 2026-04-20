@@ -1327,6 +1327,21 @@ async function ensureTabGroupsPermission({ prompt = false } = {}) {
   return false;
 }
 
+async function ensureSessionsPermission({ prompt = false } = {}) {
+  const currentlyGranted = await chrome.permissions.contains({ permissions: ['sessions'] });
+  if (currentlyGranted) {
+    _sessionsPermissionGranted = true;
+    return true;
+  }
+  if (prompt) {
+    const requested = await chrome.permissions.request({ permissions: ['sessions'] });
+    _sessionsPermissionGranted = !!requested;
+    return _sessionsPermissionGranted;
+  }
+  _sessionsPermissionGranted = false;
+  return false;
+}
+
 /* ----------------------------------------------------------------
    FAVICON RENDERING
    Returns an <img> that uses Chrome's _favicon endpoint when granted,
