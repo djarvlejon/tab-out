@@ -4235,29 +4235,47 @@ async function renderWorkspaceSection() {
 }
 
 function renderWorkspaceChip(item) {
-  const chip = el('a', {
-    class: 'qa-chip' + (_workspaceEditMode ? ' qa-edit-mode' : ''),
-    href: item.url,
-    target: '_blank',
-    rel: 'noopener',
-    title: item.label,
-    'data-link-id': item.id
-  }, [faviconEl(item.url, 24)]);
+  const editClass = _workspaceEditMode ? ' qa-edit-mode' : '';
+  const urlOk = typeof item.url === 'string' && ALLOWED_SCHEMES.test(item.url);
+
+  let chip;
+  if (urlOk) {
+    chip = el('a', {
+      class: 'qa-chip',
+      href: item.url,
+      target: '_blank',
+      rel: 'noopener',
+      title: item.label,
+      'data-link-id': item.id
+    }, [faviconEl(item.url, 24)]);
+  } else {
+    // Defensive: render non-clickable letter-chip when scheme is invalid.
+    // Should be unreachable after readWorkspaceLinks validation, but defend the DOM.
+    const letter = ((item.label && item.label.charAt(0)) || '?').toUpperCase();
+    chip = el('span', {
+      class: 'qa-chip qa-chip-disabled',
+      title: item.label || 'Invalid link',
+      'data-link-id': item.id,
+      tabindex: '0'
+    }, [el('span', { class: 'favicon-letter' }, letter)]);
+  }
+
+  const wrap = el('div', { class: 'qa-chip-wrap' + editClass }, [chip]);
 
   if (_workspaceEditMode) {
     const removeBtn = el('button', {
       class: 'qa-chip-remove',
       'data-action': 'qa-remove-link',
       'data-link-id': item.id,
-      title: 'Remove ' + item.label
+      title: 'Remove ' + (item.label || 'link')
     }, '×');
     removeBtn.addEventListener('click', (e) => {
       e.preventDefault();
     }, { once: false });
-    chip.appendChild(removeBtn);
+    wrap.appendChild(removeBtn);
   }
 
-  return chip;
+  return wrap;
 }
 
 function renderAddLinkInput(currentCount) {
@@ -4304,7 +4322,7 @@ function renderAddLinkInput(currentCount) {
     else if (e.key === 'Escape') { e.preventDefault(); exit(); }
   });
   input.addEventListener('blur', () => {
-    if (!input.value.trim() && errorEl.style.display !== 'inline') exit();
+    exit();
   });
 
   setTimeout(() => { input.focus(); }, 0);
@@ -4379,7 +4397,7 @@ function renderRecentItem(tab) {
     class: 'qa-recent-item',
     'data-action': 'qa-restore-closed',
     'data-session-id': String(tab.sessionId || ''),
-    title: tab.url
+    title: hostname
   }, [
     faviconEl(tab.url, 16),
     el('div', { class: 'qa-recent-text' }, [
@@ -4406,6 +4424,16 @@ function installQuickAccessListeners() {
       }
     });
   }
+  const row = document.getElementById('quickAccessRow');
+  if (row) {
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && _workspaceEditMode) {
+        _workspaceEditMode = false;
+        _addInputOpen = false;
+        renderWorkspaceSection();
+      }
+    });
+  }
 }
 
 
@@ -4416,8 +4444,8 @@ async function initApp() {
   await initSidebarState();
   installStorageSync();
   installQuickAccessListeners();
+  await ensureFaviconPermission({ prompt: false });
   await renderQuickAccessRow();
-  await ensureFaviconPermission();
   await renderDashboard();
 }
 

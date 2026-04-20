@@ -1669,6 +1669,17 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   border-radius: 6px;
 }
 
+.qa-chip-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.qa-chip-disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .qa-chip-remove {
   position: absolute;
   top: -4px;
@@ -1686,7 +1697,8 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   padding: 0;
   display: none;
 }
-.qa-chip.qa-edit-mode .qa-chip-remove { display: block; }
+.qa-chip-wrap.qa-edit-mode:hover .qa-chip-remove,
+.qa-chip-wrap.qa-edit-mode:focus-within .qa-chip-remove { display: block; }
 
 .qa-add {
   width: 24px;
