@@ -4295,7 +4295,7 @@ function renderAddLinkInput(currentCount) {
     errorEl.style.display = 'none';
     addWorkspaceLink(url)
       .then(() => {
-        _workspaceEditMode = true;
+        _addInputOpen = false;
         renderWorkspaceSection();
       })
       .catch(err => {
