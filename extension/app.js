@@ -4084,6 +4084,7 @@ let _sessionsPermissionGranted = false;
 let _lastSelfWorkspaceWriteToken = null;
 let _recentRefreshTimer = null;
 let _addInputOpen = false;
+let _recentlyClosedToastFired = false;
 
 function newWorkspaceWriteToken() {
   const t = 'wtw_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -4304,7 +4305,7 @@ function renderAddLinkInput(currentCount) {
         else if (msg === 'duplicate-url') text = 'Already in the list';
         else if (msg === 'cap-reached') text = 'Remove a link first';
         else if (msg === 'write-conflict') text = 'Another Tab Out tab changed Workspace — reload to see the latest.';
-        else if (String(err).toLowerCase().includes('quota')) text = 'Storage full — delete a link first.';
+        else if (String(err).toLowerCase().includes('quota')) text = 'Storage full — delete a link first';
         errorEl.textContent = text;
         errorEl.style.display = 'inline';
         input.focus();
@@ -4368,6 +4369,10 @@ async function renderRecentlyClosedSection() {
       el('div', { class: 'qa-section-label' }, 'Recently closed'),
       el('div', { class: 'qa-empty' }, "Couldn't load recently closed")
     );
+    if (!_recentlyClosedToastFired) {
+      _recentlyClosedToastFired = true;
+      showToast({ message: "Couldn't load recently closed." });
+    }
     return;
   }
 
