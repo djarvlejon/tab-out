@@ -366,11 +366,6 @@ header {
   border-radius: 3px;
 }
 
-.open-tabs-badge svg {
-  width: 10px;
-  height: 10px;
-}
-
 .mission-summary {
   font-size: 13px;
   color: var(--muted);
