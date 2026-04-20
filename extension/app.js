@@ -4135,8 +4135,17 @@ async function readWorkspaceLinks() {
       && workspaceLinks.schemaVersion === WORKSPACE_SCHEMA_VERSION
       && Array.isArray(workspaceLinks.items)) {
     const { valid, droppedCount } = _validateWorkspaceItems(workspaceLinks.items);
+    let writeToken = workspaceLinks.writeToken || null;
+    if (droppedCount > 0) {
+      try {
+        const ok = await writeWorkspaceLinksIfUnchanged(writeToken, valid);
+        if (ok) writeToken = _lastSelfWorkspaceWriteToken;
+      } catch (e) {
+        console.warn('[tab-out] workspace cleanup writeback skipped:', e && e.message);
+      }
+    }
     _notifyDroppedWorkspaceItems(droppedCount);
-    return { ...workspaceLinks, items: valid };
+    return { ...workspaceLinks, items: valid, writeToken };
   }
 
   // Absent or corrupt — CAS-seed defaults so a concurrent seed on another page doesn't clobber newer state.
