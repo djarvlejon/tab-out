@@ -3978,7 +3978,10 @@ document.addEventListener('click', async (e) => {
   }
   if (action === 'qa-enable-sessions') {
     e.preventDefault();
-    await ensureSessionsPermission({ prompt: true });
+    // permissions.request must be called synchronously from a user gesture;
+    // any prior await (e.g. contains()) breaks the gesture context.
+    const granted = await chrome.permissions.request({ permissions: ['sessions'] });
+    _sessionsPermissionGranted = !!granted;
     renderRecentlyClosedSection();
     return;
   }
