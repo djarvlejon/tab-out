@@ -4079,6 +4079,33 @@ const WORKSPACE_DEFAULTS = [
   { url: 'https://gemini.google.com/',   label: 'Gemini' }
 ];
 
+const WORKSPACE_LOGOS = {
+  'mail.google.com':     'icons/workspace/gmail.svg',
+  'calendar.google.com': 'icons/workspace/google-calendar.svg',
+  'drive.google.com':    'icons/workspace/google-drive.svg',
+  'docs.google.com':     'icons/workspace/google-docs.svg',
+  'sheets.google.com':   'icons/workspace/google-sheets.svg',
+  'slides.google.com':   'icons/workspace/google-slides.svg',
+  'gemini.google.com':   'icons/workspace/google-gemini.svg'
+};
+
+function workspaceIconEl(url, size) {
+  try {
+    const h = new URL(url).hostname;
+    const relPath = WORKSPACE_LOGOS[h];
+    if (relPath) {
+      return el('img', {
+        src: chrome.runtime.getURL(relPath),
+        width: size,
+        height: size,
+        alt: '',
+        class: 'qa-chip-logo'
+      });
+    }
+  } catch {}
+  return faviconEl(url, size);
+}
+
 let _workspaceEditMode = false;
 let _sessionsPermissionGranted = false;
 let _lastSelfWorkspaceWriteToken = null;
@@ -4257,7 +4284,7 @@ function renderWorkspaceChip(item) {
       rel: 'noopener',
       title: item.label,
       'data-link-id': item.id
-    }, [faviconEl(item.url, 24)]);
+    }, [workspaceIconEl(item.url, 24)]);
   } else {
     // Defensive: render non-clickable letter-chip when scheme is invalid.
     // Should be unreachable after readWorkspaceLinks validation, but defend the DOM.

@@ -1669,6 +1669,11 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   border-radius: 6px;
 }
 
+.qa-chip-logo {
+  border-radius: 6px;
+  display: block;
+}
+
 .qa-chip-wrap {
   position: relative;
   display: inline-block;
