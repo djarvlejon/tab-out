@@ -4413,7 +4413,14 @@ async function renderRecentlyClosedSection() {
   let tabs = [];
   try {
     const entries = await chrome.sessions.getRecentlyClosed({ maxResults: 25 });
-    tabs = entries.filter(e => e.tab).slice(0, 5).map(e => e.tab);
+    tabs = entries
+      .filter(e => e.tab && e.tab.url)
+      .filter(e => {
+        const u = e.tab.url;
+        return !u.startsWith('chrome://') && !u.startsWith('chrome-extension://') && !u.startsWith('edge://') && !u.startsWith('about:');
+      })
+      .slice(0, 5)
+      .map(e => e.tab);
   } catch (err) {
     console.warn('[tab-out] getRecentlyClosed failed', err);
     container.replaceChildren(
@@ -4444,7 +4451,10 @@ async function renderRecentlyClosedSection() {
 function renderRecentItem(tab) {
   let hostname = '';
   try { hostname = new URL(tab.url).hostname.replace(/^www\./, ''); } catch {}
-  const title = (tab.title && tab.title.trim()) || hostname || 'Untitled';
+  const hasTitle = tab.title && tab.title.trim();
+  const titleNode = hasTitle
+    ? textNode(tab.title.trim())
+    : el('em', { class: 'qa-recent-title-untitled' }, '(no title)');
   const lastAccessedMs = _normalizeLastAccessed(tab.lastAccessed);
   const lastAccessedIso = new Date(lastAccessedMs).toISOString();
   const ago = timeAgo(lastAccessedIso);
@@ -4457,7 +4467,7 @@ function renderRecentItem(tab) {
   }, [
     faviconEl(tab.url, 16),
     el('div', { class: 'qa-recent-text' }, [
-      el('div', { class: 'qa-recent-title' }, title),
+      el('div', { class: 'qa-recent-title' }, titleNode),
       el('div', { class: 'qa-recent-meta' }, hostname + ' · ' + ago)
     ])
   ]);
