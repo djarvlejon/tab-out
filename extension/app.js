@@ -44,7 +44,7 @@ async function fetchOpenTabs() {
     // The new URL for this page is now index.html (not newtab.html)
     const newtabUrl = `chrome-extension://${extensionId}/index.html`;
 
-    const tabs = await chrome.tabs.query({});
+    const tabs = await chrome.tabs.query({ currentWindow: true });
     openTabs = tabs.map(t => ({
       id:       t.id,
       url:      t.url,
@@ -1777,14 +1777,26 @@ function getRealTabs() {
  * Counts how many Tab Out pages are open. If more than 1,
  * shows a banner offering to close the extras.
  */
-function checkTabOutDupes() {
-  const tabOutTabs = openTabs.filter(t => t.isTabOut);
+async function checkTabOutDupes() {
   const banner  = document.getElementById('tabOutDupeBanner');
   const countEl = document.getElementById('tabOutDupeCount');
   if (!banner) return;
 
-  if (tabOutTabs.length > 1) {
-    if (countEl) countEl.textContent = tabOutTabs.length;
+  let tabOutCount = 0;
+  try {
+    const extensionId = chrome.runtime.id;
+    const newtabUrl = `chrome-extension://${extensionId}/index.html`;
+    const allTabs = await chrome.tabs.query({});
+    tabOutCount = allTabs.filter(t =>
+      t.url === newtabUrl || t.url === 'chrome://newtab/'
+    ).length;
+  } catch {
+    banner.style.display = 'none';
+    return;
+  }
+
+  if (tabOutCount > 1) {
+    if (countEl) countEl.textContent = tabOutCount;
     banner.style.display = 'flex';
   } else {
     banner.style.display = 'none';
