@@ -1289,6 +1289,11 @@ function installStorageSync() {
       renderSidebar();
       updateSidebarVisibility();
     }
+    if (changes.workspaceLinks) {
+      const nv = changes.workspaceLinks.newValue;
+      if (_lastSelfWorkspaceWriteToken && nv && nv.writeToken === _lastSelfWorkspaceWriteToken) return;
+      renderWorkspaceSection();
+    }
   });
 }
 
@@ -4322,6 +4327,25 @@ function renderRecentItem(tab) {
   ]);
 }
 
+function scheduleRecentRefresh() {
+  clearTimeout(_recentRefreshTimer);
+  _recentRefreshTimer = setTimeout(() => renderRecentlyClosedSection(), 250);
+}
+
+function installQuickAccessListeners() {
+  if (chrome.tabs && chrome.tabs.onRemoved) {
+    chrome.tabs.onRemoved.addListener(scheduleRecentRefresh);
+  }
+  if (chrome.permissions && chrome.permissions.onRemoved) {
+    chrome.permissions.onRemoved.addListener((perms) => {
+      if (perms && Array.isArray(perms.permissions) && perms.permissions.includes('sessions')) {
+        _sessionsPermissionGranted = false;
+        renderRecentlyClosedSection();
+      }
+    });
+  }
+}
+
 
 /* ----------------------------------------------------------------
    INITIALIZE
@@ -4329,6 +4353,7 @@ function renderRecentItem(tab) {
 async function initApp() {
   await initSidebarState();
   installStorageSync();
+  installQuickAccessListeners();
   await renderQuickAccessRow();
   await ensureFaviconPermission();
   await renderDashboard();
