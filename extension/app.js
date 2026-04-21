@@ -3961,12 +3961,8 @@ document.addEventListener('click', async (e) => {
   }
   if (action === 'qa-add-link-start') {
     e.preventDefault();
-    console.warn('[QA-DEBUG] click qa-add-link-start, _addInputOpen before=', _addInputOpen);
     _addInputOpen = true;
-    renderWorkspaceSection()
-      .then(() => console.warn('[QA-DEBUG] renderWorkspaceSection done. input visible?',
-        !!document.querySelector('.qa-add-input'),
-        'activeElement=', document.activeElement && document.activeElement.tagName));
+    renderWorkspaceSection();
     return;
   }
   if (action === 'qa-enable-sessions') {
@@ -4333,7 +4329,6 @@ function renderAddLinkInput(currentCount) {
   }
 
   function exit() {
-    console.warn('[QA-DEBUG] exit() called. Stack:', new Error().stack.split('\n').slice(1, 4).join(' | '));
     teardown();
     _addInputOpen = false;
     renderWorkspaceSection();
@@ -4341,23 +4336,19 @@ function renderAddLinkInput(currentCount) {
 
   function commit() {
     let url = input.value.trim();
-    console.warn('[QA-DEBUG] commit(). raw url=', JSON.stringify(url));
     if (!url) { exit(); return; }
     // If user typed a bare domain (e.g. "gemini.google.com"), prefix https://
-    // so the scheme-allowlist accepts it. Matches common "paste URL in address
-    // bar" muscle memory.
+    // so the scheme-allowlist accepts it.
     if (!/^https?:\/\//i.test(url)) {
       url = 'https://' + url;
     }
     errorEl.style.display = 'none';
-    console.warn('[QA-DEBUG] commit(): calling addWorkspaceLink with url=', JSON.stringify(url));
     addWorkspaceLink(url)
       .then(() => {
-        console.warn('[QA-DEBUG] commit(): addWorkspaceLink RESOLVED, calling exit()');
+        // Route through exit() so teardown runs in both paths.
         exit();
       })
       .catch(err => {
-        console.warn('[QA-DEBUG] commit(): addWorkspaceLink REJECTED', err && err.message, err);
         const msg = err && err.message;
         let text = "Couldn't add link.";
         if (msg === 'invalid-scheme') text = 'Use http:// or https://';
@@ -4378,31 +4369,19 @@ function renderAddLinkInput(currentCount) {
   });
 
   setTimeout(() => {
-    console.warn('[QA-DEBUG] setTimeout(0): focusing input. activeElement before=',
-      document.activeElement && document.activeElement.tagName);
     input.focus();
-    console.warn('[QA-DEBUG] setTimeout(0): after focus(). activeElement=',
-      document.activeElement && document.activeElement.tagName,
-      'input.isConnected=', input.isConnected);
-    // Arm click-outside detection after a short delay so the click that opened
-    // this input doesn't immediately close it. Use capture phase so we catch
-    // the click before any action handler processes it. Track the arm timer
-    // so teardown() can cancel it if exit() runs within the 150ms window.
+    // Arm click-outside detection after a short delay so the click that
+    // opened this input doesn't immediately close it. On outside click,
+    // auto-commit if the user has typed something (so clicking ✎/✓ or
+    // elsewhere feels like "I'm done, save it"), otherwise cancel.
+    // Escape still cancels without saving.
     armTimer = setTimeout(() => {
       armTimer = null;
-      console.warn('[QA-DEBUG] ARMING outsideClickHandler now. activeElement=',
-        document.activeElement && document.activeElement.tagName,
-        'input.isConnected=', input.isConnected,
-        'wrapper.isConnected=', wrapper.isConnected);
       outsideClickHandler = (e) => {
-        const tgt = e.target;
-        const tgtDesc = tgt && (tgt.tagName + '.' + tgt.className + '#' + tgt.id);
-        const inside = wrapper.contains(tgt);
-        console.warn('[QA-DEBUG] outsideClickHandler fired. target=', tgtDesc,
-          'wrapper.contains=', inside,
-          'wrapper.isConnected=', wrapper.isConnected,
-          'e.isTrusted=', e.isTrusted);
-        if (!inside) {
+        if (wrapper.contains(e.target)) return;
+        if (input.value.trim()) {
+          commit();
+        } else {
           exit();
         }
       };
