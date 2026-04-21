@@ -3961,8 +3961,12 @@ document.addEventListener('click', async (e) => {
   }
   if (action === 'qa-add-link-start') {
     e.preventDefault();
+    console.warn('[QA-DEBUG] click qa-add-link-start, _addInputOpen before=', _addInputOpen);
     _addInputOpen = true;
-    renderWorkspaceSection();
+    renderWorkspaceSection()
+      .then(() => console.warn('[QA-DEBUG] renderWorkspaceSection done. input visible?',
+        !!document.querySelector('.qa-add-input'),
+        'activeElement=', document.activeElement && document.activeElement.tagName));
     return;
   }
   if (action === 'qa-enable-sessions') {
@@ -4329,6 +4333,7 @@ function renderAddLinkInput(currentCount) {
   }
 
   function exit() {
+    console.warn('[QA-DEBUG] exit() called. Stack:', new Error().stack.split('\n').slice(1, 4).join(' | '));
     teardown();
     _addInputOpen = false;
     renderWorkspaceSection();
@@ -4336,6 +4341,7 @@ function renderAddLinkInput(currentCount) {
 
   function commit() {
     let url = input.value.trim();
+    console.warn('[QA-DEBUG] commit(). raw url=', JSON.stringify(url));
     if (!url) { exit(); return; }
     // If user typed a bare domain (e.g. "gemini.google.com"), prefix https://
     // so the scheme-allowlist accepts it. Matches common "paste URL in address
@@ -4344,13 +4350,14 @@ function renderAddLinkInput(currentCount) {
       url = 'https://' + url;
     }
     errorEl.style.display = 'none';
+    console.warn('[QA-DEBUG] commit(): calling addWorkspaceLink with url=', JSON.stringify(url));
     addWorkspaceLink(url)
       .then(() => {
-        // Route through exit() so teardown runs in both paths — otherwise
-        // the document click-outside listener leaks as a zombie.
+        console.warn('[QA-DEBUG] commit(): addWorkspaceLink RESOLVED, calling exit()');
         exit();
       })
       .catch(err => {
+        console.warn('[QA-DEBUG] commit(): addWorkspaceLink REJECTED', err && err.message, err);
         const msg = err && err.message;
         let text = "Couldn't add link.";
         if (msg === 'invalid-scheme') text = 'Use http:// or https://';
