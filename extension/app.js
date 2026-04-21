@@ -1291,6 +1291,8 @@ function installStorageSync() {
     }
     if (changes.workspaceLinks) {
       const nv = changes.workspaceLinks.newValue;
+      console.warn('[tab-out] storage.onChanged workspaceLinks fired. self-echo check:',
+        { incomingToken: nv && nv.writeToken, lastSelf: _lastSelfWorkspaceWriteToken, willSkip: _lastSelfWorkspaceWriteToken && nv && nv.writeToken === _lastSelfWorkspaceWriteToken });
       if (_lastSelfWorkspaceWriteToken && nv && nv.writeToken === _lastSelfWorkspaceWriteToken) return;
       renderWorkspaceSection();
     }
@@ -4257,6 +4259,9 @@ async function renderQuickAccessRow() {
 async function renderWorkspaceSection() {
   const container = document.getElementById('qaWorkspace');
   if (!container) return;
+  console.warn('[tab-out] renderWorkspaceSection ENTRY, _addInputOpen=', _addInputOpen, '_workspaceEditMode=', _workspaceEditMode);
+  const stack = new Error().stack.split('\n').slice(1, 6).join(' | ');
+  console.warn('[tab-out] renderWorkspaceSection call stack:', stack);
 
   const { items } = await readWorkspaceLinks();
 
