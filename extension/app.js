@@ -4082,9 +4082,10 @@ const WORKSPACE_LOGOS = {
 };
 
 function workspaceIconEl(url, size) {
+  let hostname = '';
   try {
-    const h = new URL(url).hostname;
-    const relPath = WORKSPACE_LOGOS[h];
+    hostname = new URL(url).hostname;
+    const relPath = WORKSPACE_LOGOS[hostname];
     if (relPath) {
       return el('img', {
         src: chrome.runtime.getURL(relPath),
@@ -4095,7 +4096,11 @@ function workspaceIconEl(url, size) {
       });
     }
   } catch {}
-  return faviconEl(url, size);
+  // For user-added Workspace links, always use the letter chip. Chrome's
+  // _favicon endpoint returns a placeholder icon for uncached favicons
+  // (doesn't 404), so the img's onerror never fires and users see a
+  // broken-looking generic icon. Letter chip is reliably readable.
+  return letterChipEl(hostname, size);
 }
 
 let _workspaceEditMode = false;
