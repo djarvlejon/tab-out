@@ -1291,8 +1291,6 @@ function installStorageSync() {
     }
     if (changes.workspaceLinks) {
       const nv = changes.workspaceLinks.newValue;
-      console.warn('[tab-out] storage.onChanged workspaceLinks fired. self-echo check:',
-        { incomingToken: nv && nv.writeToken, lastSelf: _lastSelfWorkspaceWriteToken, willSkip: _lastSelfWorkspaceWriteToken && nv && nv.writeToken === _lastSelfWorkspaceWriteToken });
       if (_lastSelfWorkspaceWriteToken && nv && nv.writeToken === _lastSelfWorkspaceWriteToken) return;
       renderWorkspaceSection();
     }
@@ -3975,11 +3973,8 @@ document.addEventListener('click', async (e) => {
   }
   if (action === 'qa-add-link-start') {
     e.preventDefault();
-    console.warn('[tab-out] qa-add-link-start click detected, _addInputOpen=', _addInputOpen);
     _addInputOpen = true;
-    renderWorkspaceSection()
-      .then(() => console.warn('[tab-out] renderWorkspaceSection resolved, _addInputOpen=', _addInputOpen))
-      .catch(err => console.warn('[tab-out] renderWorkspaceSection threw', err));
+    renderWorkspaceSection();
     return;
   }
   if (action === 'qa-enable-sessions') {
@@ -4259,9 +4254,6 @@ async function renderQuickAccessRow() {
 async function renderWorkspaceSection() {
   const container = document.getElementById('qaWorkspace');
   if (!container) return;
-  console.warn('[tab-out] renderWorkspaceSection ENTRY, _addInputOpen=', _addInputOpen, '_workspaceEditMode=', _workspaceEditMode);
-  const stack = new Error().stack.split('\n').slice(1, 6).join(' | ');
-  console.warn('[tab-out] renderWorkspaceSection call stack:', stack);
 
   const { items } = await readWorkspaceLinks();
 
@@ -4328,7 +4320,6 @@ function renderWorkspaceChip(item) {
 }
 
 function renderAddLinkInput(currentCount) {
-  console.warn('[tab-out] renderAddLinkInput called, currentCount=', currentCount);
   const input = el('input', {
     type: 'url',
     class: 'qa-add-input',
@@ -4362,7 +4353,12 @@ function renderAddLinkInput(currentCount) {
       });
   }
 
+  let outsideClickHandler = null;
   function exit() {
+    if (outsideClickHandler) {
+      document.removeEventListener('click', outsideClickHandler, true);
+      outsideClickHandler = null;
+    }
     _addInputOpen = false;
     renderWorkspaceSection();
   }
@@ -4373,17 +4369,17 @@ function renderAddLinkInput(currentCount) {
   });
 
   setTimeout(() => {
-    console.warn('[tab-out] add-input focus, document.contains(input)=', document.contains(input));
     input.focus();
+    // Arm click-outside detection after a short delay so the click that opened
+    // this input doesn't immediately close it. Use capture phase so we catch
+    // the click before any action handler processes it.
     setTimeout(() => {
-      console.warn('[tab-out] add-input arming blur listener, activeElement=', document.activeElement && document.activeElement.tagName, document.activeElement && document.activeElement.className);
-      input.addEventListener('blur', (ev) => {
-        console.warn('[tab-out] add-input blur fired. relatedTarget=',
-          ev.relatedTarget && (ev.relatedTarget.tagName + '.' + ev.relatedTarget.className + '#' + ev.relatedTarget.id),
-          'newActiveElement=',
-          document.activeElement && (document.activeElement.tagName + '.' + document.activeElement.className + '#' + document.activeElement.id));
-        exit();
-      });
+      outsideClickHandler = (e) => {
+        if (!wrapper.contains(e.target)) {
+          exit();
+        }
+      };
+      document.addEventListener('click', outsideClickHandler, true);
     }, 150);
   }, 0);
 
