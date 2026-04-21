@@ -4362,11 +4362,13 @@ function renderAddLinkInput(currentCount) {
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
     else if (e.key === 'Escape') { e.preventDefault(); exit(); }
   });
-  input.addEventListener('blur', () => {
-    exit();
-  });
 
-  setTimeout(() => { input.focus(); }, 0);
+  setTimeout(() => {
+    input.focus();
+    setTimeout(() => {
+      input.addEventListener('blur', () => exit());
+    }, 150);
+  }, 0);
 
   return wrapper;
 }
