@@ -1353,26 +1353,14 @@ async function ensureSessionsPermission({ prompt = false } = {}) {
    or a letter-chip fallback element.
    ---------------------------------------------------------------- */
 
-function maybePromptForFaviconPermission(hostname, { promptContext = '' } = {}) {
-  if (!hostname || promptContext !== 'sessions') return;
-  if (sidebarState.pane !== 'sessions') return;
-  if (_faviconPermissionGranted || _faviconPromptAttempted) return;
-  _faviconPromptAttempted = true;
-  ensureFaviconPermission({ prompt: true })
-    .then(granted => {
-      if (!granted) return;
-      return renderSessionsPane();
-    })
-    .catch(err => {
-      console.warn('[tab-out] favicon permission request failed', err);
-    });
-}
-
 function faviconEl(url, size = 16, { promptContext = '' } = {}) {
+  // promptContext is accepted for call-site compatibility but no longer
+  // triggers a runtime permission prompt — chrome.permissions.request requires
+  // a user gesture, which render paths don't have. Users can grant the
+  // "favicon" permission from chrome://extensions if they want real favicons;
+  // otherwise the letter-chip fallback is used.
   let hostname = '';
   try { hostname = new URL(url).hostname; } catch {}
-
-  maybePromptForFaviconPermission(hostname, { promptContext });
 
   if (_faviconPermissionGranted && hostname) {
     const faviconHref = chrome.runtime.getURL('_favicon/')
