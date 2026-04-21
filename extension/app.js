@@ -4317,19 +4317,34 @@ function renderAddLinkInput(currentCount) {
 
   const wrapper = el('span', { class: 'qa-add-wrapper' }, [input, errorEl]);
 
+  let outsideClickHandler = null;
+  let armTimer = null;
+
+  function teardown() {
+    if (armTimer) { clearTimeout(armTimer); armTimer = null; }
+    if (outsideClickHandler) {
+      document.removeEventListener('click', outsideClickHandler, true);
+      outsideClickHandler = null;
+    }
+  }
+
+  function exit() {
+    teardown();
+    _addInputOpen = false;
+    renderWorkspaceSection();
+  }
+
   function commit() {
     const url = input.value.trim();
-    console.warn('[tab-out] commit() called, url=', JSON.stringify(url));
-    if (!url) { console.warn('[tab-out] commit: empty url, exit'); exit(); return; }
+    if (!url) { exit(); return; }
     errorEl.style.display = 'none';
     addWorkspaceLink(url)
       .then(() => {
-        console.warn('[tab-out] commit: addWorkspaceLink resolved');
-        _addInputOpen = false;
-        renderWorkspaceSection();
+        // Route through exit() so teardown runs in both paths — otherwise
+        // the document click-outside listener leaks as a zombie.
+        exit();
       })
       .catch(err => {
-        console.warn('[tab-out] commit: addWorkspaceLink rejected:', err && err.message, err);
         const msg = err && err.message;
         let text = "Couldn't add link.";
         if (msg === 'invalid-scheme') text = 'Use http:// or https://';
@@ -4344,16 +4359,6 @@ function renderAddLinkInput(currentCount) {
       });
   }
 
-  let outsideClickHandler = null;
-  function exit() {
-    if (outsideClickHandler) {
-      document.removeEventListener('click', outsideClickHandler, true);
-      outsideClickHandler = null;
-    }
-    _addInputOpen = false;
-    renderWorkspaceSection();
-  }
-
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
     else if (e.key === 'Escape') { e.preventDefault(); exit(); }
@@ -4363,8 +4368,10 @@ function renderAddLinkInput(currentCount) {
     input.focus();
     // Arm click-outside detection after a short delay so the click that opened
     // this input doesn't immediately close it. Use capture phase so we catch
-    // the click before any action handler processes it.
-    setTimeout(() => {
+    // the click before any action handler processes it. Track the arm timer
+    // so teardown() can cancel it if exit() runs within the 150ms window.
+    armTimer = setTimeout(() => {
+      armTimer = null;
       outsideClickHandler = (e) => {
         if (!wrapper.contains(e.target)) {
           exit();
