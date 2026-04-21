@@ -4378,15 +4378,31 @@ function renderAddLinkInput(currentCount) {
   });
 
   setTimeout(() => {
+    console.warn('[QA-DEBUG] setTimeout(0): focusing input. activeElement before=',
+      document.activeElement && document.activeElement.tagName);
     input.focus();
+    console.warn('[QA-DEBUG] setTimeout(0): after focus(). activeElement=',
+      document.activeElement && document.activeElement.tagName,
+      'input.isConnected=', input.isConnected);
     // Arm click-outside detection after a short delay so the click that opened
     // this input doesn't immediately close it. Use capture phase so we catch
     // the click before any action handler processes it. Track the arm timer
     // so teardown() can cancel it if exit() runs within the 150ms window.
     armTimer = setTimeout(() => {
       armTimer = null;
+      console.warn('[QA-DEBUG] ARMING outsideClickHandler now. activeElement=',
+        document.activeElement && document.activeElement.tagName,
+        'input.isConnected=', input.isConnected,
+        'wrapper.isConnected=', wrapper.isConnected);
       outsideClickHandler = (e) => {
-        if (!wrapper.contains(e.target)) {
+        const tgt = e.target;
+        const tgtDesc = tgt && (tgt.tagName + '.' + tgt.className + '#' + tgt.id);
+        const inside = wrapper.contains(tgt);
+        console.warn('[QA-DEBUG] outsideClickHandler fired. target=', tgtDesc,
+          'wrapper.contains=', inside,
+          'wrapper.isConnected=', wrapper.isConnected,
+          'e.isTrusted=', e.isTrusted);
+        if (!inside) {
           exit();
         }
       };
