@@ -3973,8 +3973,11 @@ document.addEventListener('click', async (e) => {
   }
   if (action === 'qa-add-link-start') {
     e.preventDefault();
+    console.warn('[tab-out] qa-add-link-start click detected, _addInputOpen=', _addInputOpen);
     _addInputOpen = true;
-    renderWorkspaceSection();
+    renderWorkspaceSection()
+      .then(() => console.warn('[tab-out] renderWorkspaceSection resolved, _addInputOpen=', _addInputOpen))
+      .catch(err => console.warn('[tab-out] renderWorkspaceSection threw', err));
     return;
   }
   if (action === 'qa-enable-sessions') {
@@ -4320,6 +4323,7 @@ function renderWorkspaceChip(item) {
 }
 
 function renderAddLinkInput(currentCount) {
+  console.warn('[tab-out] renderAddLinkInput called, currentCount=', currentCount);
   const input = el('input', {
     type: 'url',
     class: 'qa-add-input',
@@ -4364,9 +4368,14 @@ function renderAddLinkInput(currentCount) {
   });
 
   setTimeout(() => {
+    console.warn('[tab-out] add-input focus, document.contains(input)=', document.contains(input));
     input.focus();
     setTimeout(() => {
-      input.addEventListener('blur', () => exit());
+      console.warn('[tab-out] add-input arming blur listener, activeElement=', document.activeElement && document.activeElement.tagName, document.activeElement && document.activeElement.className);
+      input.addEventListener('blur', () => {
+        console.warn('[tab-out] add-input blur fired → exit()');
+        exit();
+      });
     }, 150);
   }, 0);
 
