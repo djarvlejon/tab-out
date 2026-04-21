@@ -4319,14 +4319,17 @@ function renderAddLinkInput(currentCount) {
 
   function commit() {
     const url = input.value.trim();
-    if (!url) { exit(); return; }
+    console.warn('[tab-out] commit() called, url=', JSON.stringify(url));
+    if (!url) { console.warn('[tab-out] commit: empty url, exit'); exit(); return; }
     errorEl.style.display = 'none';
     addWorkspaceLink(url)
       .then(() => {
+        console.warn('[tab-out] commit: addWorkspaceLink resolved');
         _addInputOpen = false;
         renderWorkspaceSection();
       })
       .catch(err => {
+        console.warn('[tab-out] commit: addWorkspaceLink rejected:', err && err.message, err);
         const msg = err && err.message;
         let text = "Couldn't add link.";
         if (msg === 'invalid-scheme') text = 'Use http:// or https://';
