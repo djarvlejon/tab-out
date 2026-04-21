@@ -4096,11 +4096,25 @@ function workspaceIconEl(url, size) {
       });
     }
   } catch {}
-  // For user-added Workspace links, always use the letter chip. Chrome's
-  // _favicon endpoint returns a placeholder icon for uncached favicons
-  // (doesn't 404), so the img's onerror never fires and users see a
-  // broken-looking generic icon. Letter chip is reliably readable.
-  return letterChipEl(hostname, size);
+
+  if (!hostname) return letterChipEl('?', size);
+
+  // Use Google's public favicon service for user-added Workspace links.
+  // Chrome's local _favicon endpoint only resolves for recently-visited
+  // sites; this covers arbitrary hosts. One external request per chip.
+  const bare = hostname.replace(/^www\./, '');
+  const img = el('img', {
+    src: 'https://www.google.com/s2/favicons?sz=' + (size * 2) + '&domain=' + encodeURIComponent(bare),
+    width: size,
+    height: size,
+    alt: '',
+    class: 'qa-chip-logo',
+    referrerpolicy: 'no-referrer'
+  });
+  img.addEventListener('error', () => {
+    img.replaceWith(letterChipEl(hostname, size));
+  });
+  return img;
 }
 
 let _workspaceEditMode = false;
