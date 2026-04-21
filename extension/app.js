@@ -4372,8 +4372,11 @@ function renderAddLinkInput(currentCount) {
     input.focus();
     setTimeout(() => {
       console.warn('[tab-out] add-input arming blur listener, activeElement=', document.activeElement && document.activeElement.tagName, document.activeElement && document.activeElement.className);
-      input.addEventListener('blur', () => {
-        console.warn('[tab-out] add-input blur fired → exit()');
+      input.addEventListener('blur', (ev) => {
+        console.warn('[tab-out] add-input blur fired. relatedTarget=',
+          ev.relatedTarget && (ev.relatedTarget.tagName + '.' + ev.relatedTarget.className + '#' + ev.relatedTarget.id),
+          'newActiveElement=',
+          document.activeElement && (document.activeElement.tagName + '.' + document.activeElement.className + '#' + document.activeElement.id));
         exit();
       });
     }, 150);
