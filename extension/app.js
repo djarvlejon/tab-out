@@ -4335,8 +4335,14 @@ function renderAddLinkInput(currentCount) {
   }
 
   function commit() {
-    const url = input.value.trim();
+    let url = input.value.trim();
     if (!url) { exit(); return; }
+    // If user typed a bare domain (e.g. "gemini.google.com"), prefix https://
+    // so the scheme-allowlist accepts it. Matches common "paste URL in address
+    // bar" muscle memory.
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
     errorEl.style.display = 'none';
     addWorkspaceLink(url)
       .then(() => {
