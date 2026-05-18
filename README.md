@@ -2,6 +2,8 @@
 
 **Keep tabs on your tabs.**
 
+> **Fork notice:** This is a fork of [zarazhangrui/tab-out](https://github.com/zarazhangrui/tab-out) by [Zara](https://x.com/zarazhangrui), with two additions: **Sessions** (save and reopen browser windows, with search, in-session edit, and a 7-day Trash) and a **Quick-access row** (configurable Google Workspace shortcuts + recently-closed tabs) between the header and main grid.
+
 Tab Out is a Chrome extension that replaces your new tab page with a dashboard of everything you have open. Tabs are grouped by domain, with homepages (Gmail, X, LinkedIn, etc.) pulled into their own group. Close tabs with a satisfying swoosh + confetti.
 
 No server. No account. No external API calls — fonts are self-hosted and favicons use Chrome's built-in favicon endpoint. Just a Chrome extension.
