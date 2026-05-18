@@ -27,12 +27,16 @@ The agent will walk you through it. Takes about 1 minute.
 - **Close tabs with style** with swoosh sound + confetti burst
 - **Duplicate detection** flags when you have the same page open twice, with one-click cleanup
 - **Click any tab to jump to it** across windows, no new tab opened
-- **Save a window as a session** named or quick snapshot, reopen anytime in a new window, 7-day Trash for accidental deletes
-- **Quick-access row** configurable Google Workspace shortcuts + last 5 recently-closed tabs (optional permission)
+- **Save windows as sessions** name them, or use the quick-snapshot slot; reopen anytime into a new window (additive — never disturbs your current tabs); 7-day Trash with Undo
+- **Search and edit sessions** search session names and the tabs inside them; expand any session to see its tabs, remove individual ones, or paste a URL to add a new tab
+- **Tab groups preserved** Chrome tab-group colors and names are saved and restored on reopen (optional `tabGroups` permission)
+- **Cross-tab sync** open Tab Out in multiple new tabs — session changes sync live; atomic writes prevent lost updates between tabs
+- **Quick-access row** between header and main grid: configurable Google Workspace shortcuts (Gmail / Calendar / Drive / Docs / Sheets / Slides / Gemini, bundled SVGs) plus your last 5 recently-closed tabs (optional `sessions` permission)
+- **Add your own Workspace links** inline edit mode to add/remove links; favicons fetched via Google's s2 service
 - **Save for later** bookmark tabs to a checklist before closing them
 - **Localhost grouping** shows port numbers next to each tab so you can tell your vibe coding projects apart
 - **Expandable groups** show the first 8 tabs with a clickable "+N more"
-- **Local** your sessions are stored in your Chrome profile on this device. Nothing is synced or uploaded.
+- **Local-first** sessions, saved tabs, and Workspace links live in `chrome.storage.local` on this device; no accounts, no telemetry. The only external request is favicon fetches for user-added Workspace links
 - **Pure Chrome extension** no server, no Node.js, no npm, no setup beyond loading the extension
 
 ---
