@@ -985,6 +985,75 @@ function computeSummary(tabs) {
   };
 }
 
+function deriveTabTitleFromUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    const segs = u.pathname.split('/').filter(Boolean).map(s => {
+      try { return decodeURIComponent(s); } catch { return s; }
+    });
+    if (segs.length === 0) return host;
+    if (segs.length >= 2 && /^(github\.com|gitlab\.com|bitbucket\.org)$/i.test(host)) {
+      return segs[0] + '/' + segs[1];
+    }
+    const last = segs[segs.length - 1].replace(/\.[a-z0-9]{2,5}$/i, '');
+    if (last && !/^\d+$/.test(last)) return last;
+    return host;
+  } catch {
+    return url;
+  }
+}
+
+async function findOpenTabTitle(url) {
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const match = allTabs.find(t => t.url === url && t.title && t.title.trim());
+    return match ? match.title.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function addTabToSession(sessionId, rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!ALLOWED_SCHEMES.test(raw)) throw new Error('invalid-scheme');
+
+  const openTitle = await findOpenTabTitle(raw);
+  const title = openTitle || deriveTabTitleFromUrl(raw);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { items, writeToken } = await readSessions();
+    const idx = items.findIndex(s => s.id === sessionId);
+    if (idx === -1) throw new Error('session-gone');
+    const current = items[idx];
+
+    if (current.tabs.some(t => t.url === raw)) {
+      throw new Error('duplicate-url');
+    }
+
+    const newTab = {
+      url: raw,
+      title,
+      favIconUrl: '',
+      pinned: false,
+      index: current.tabs.length,
+      savedGroupKey: null
+    };
+
+    const updated = structuredClone(current);
+    updated.tabs.push(newTab);
+    updated.rev = (current.rev || 0) + 1;
+    updated.updatedAt = new Date().toISOString();
+    updated.summary = computeSummary(updated.tabs);
+
+    const nextSessions = items.slice();
+    nextSessions[idx] = updated;
+    const ok = await setSessionsIfUnchanged(writeToken, nextSessions);
+    if (ok) return newTab;
+  }
+  throw new Error('write-conflict');
+}
+
 async function removeTabFromSession(sessionId, tabIndex) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const [{ items, writeToken }, { items: trashItems, writeToken: trashWriteToken }] = await Promise.all([readSessions(), readTrash()]);
@@ -2161,8 +2230,9 @@ function renderSessionCard(session, q = '') {
       (session.summary.topDomains || []).map(d => faviconEl('https://' + d.hostname, 16, { promptContext: 'sessions' }))
     ));
     if (isExpanded) {
-      const list = el('div', { class: 'session-tab-list' },
-        session.tabs.map((t, i) => renderSessionTabRow(session.id, t, i, q)));
+      const tabRows = session.tabs.map((t, i) => renderSessionTabRow(session.id, t, i, q));
+      const addRow = renderSessionAddRow(session.id);
+      const list = el('div', { class: 'session-tab-list' }, [...tabRows, addRow]);
       children.push(list);
     }
   }
@@ -2204,6 +2274,92 @@ function renderSessionTabRow(sessionId, tab, tabIndex, q = '') {
   ]);
 }
 
+function renderSessionAddRow(sessionId) {
+  if (_addingToSessionId === sessionId) {
+    return renderSessionAddInput(sessionId);
+  }
+  return el('div', {
+    class: 'session-add-row',
+    'data-action': 'session-add-link-start',
+    'data-session-id': sessionId
+  }, [
+    el('span', { class: 'session-add-plus' }, '+'),
+    el('span', { class: 'session-add-label' }, 'Add link')
+  ]);
+}
+
+function renderSessionAddInput(sessionId) {
+  const input = el('input', {
+    type: 'url',
+    class: 'session-add-input',
+    placeholder: 'https://example.com'
+  });
+  const errorEl = el('span', { class: 'session-add-error', style: { display: 'none' } });
+  const wrapper = el('div', { class: 'session-add-input-wrap' }, [input, errorEl]);
+
+  let outsideClickHandler = null;
+  let armTimer = null;
+
+  function teardown() {
+    if (armTimer) { clearTimeout(armTimer); armTimer = null; }
+    if (outsideClickHandler) {
+      document.removeEventListener('click', outsideClickHandler, true);
+      outsideClickHandler = null;
+    }
+  }
+
+  function exit() {
+    teardown();
+    _addingToSessionId = null;
+    renderSessionsPane();
+  }
+
+  function commit() {
+    let url = input.value.trim();
+    if (!url) { exit(); return; }
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    errorEl.style.display = 'none';
+    addTabToSession(sessionId, url)
+      .then(() => { exit(); })
+      .catch(err => {
+        const msg = err && err.message;
+        let text = "Couldn't add link.";
+        if (msg === 'invalid-scheme') text = 'Use http:// or https://';
+        else if (msg === 'duplicate-url') text = 'Already in this session';
+        else if (msg === 'session-gone') text = 'Session no longer exists';
+        else if (msg === 'write-conflict') text = 'Session changed in another tab — reload';
+        else if (String(err).toLowerCase().includes('quota')) text = 'Storage full';
+        errorEl.textContent = text;
+        errorEl.style.display = 'inline';
+        input.focus();
+        input.select();
+      });
+  }
+
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); exit(); }
+  });
+  input.addEventListener('click', (e) => e.stopPropagation());
+  wrapper.addEventListener('click', (e) => e.stopPropagation());
+
+  setTimeout(() => {
+    input.focus();
+    armTimer = setTimeout(() => {
+      armTimer = null;
+      outsideClickHandler = (e) => {
+        if (wrapper.contains(e.target)) return;
+        if (input.value.trim()) commit();
+        else exit();
+      };
+      document.addEventListener('click', outsideClickHandler, true);
+    }, 150);
+  }, 0);
+
+  return wrapper;
+}
+
 function renderSessionsSearch() {
   const input = el('input', {
     type: 'text',
@@ -2231,6 +2387,7 @@ let _sessionSearchRestoreFocus = false;
 let _openKebab = null;
 let _kebabOpenToken = 0;
 const _expandedSessions = new Set();
+let _addingToSessionId = null;
 
 function sessionMatchesQuery(session, q) {
   if (!q) return true;
@@ -3425,6 +3582,14 @@ document.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
     toggleSessionExpand(actionEl.dataset.sessionId);
+    return;
+  }
+
+  if (action === 'session-add-link-start') {
+    e.preventDefault();
+    e.stopPropagation();
+    _addingToSessionId = actionEl.dataset.sessionId;
+    await renderSessionsPane();
     return;
   }
 

@@ -1286,6 +1286,53 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
 
 .session-tab-close:hover { background: var(--hover); color: var(--fg); }
 
+.session-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-add-row:hover { background: var(--hover); color: var(--fg); }
+
+.session-add-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.session-add-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.session-add-input {
+  background: var(--bg);
+  border: 1px solid var(--fg);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 13px;
+  flex: 1;
+  height: 22px;
+  box-sizing: border-box;
+}
+
+.session-add-error {
+  color: var(--red, #d9534f);
+  font-size: 11px;
+}
+
 .session-empty-state {
   padding: 16px;
   text-align: center;
